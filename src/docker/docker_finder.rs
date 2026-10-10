@@ -125,17 +125,3 @@ pub fn find_all_dockerfiles() -> io::Result<Vec<PathBuf>> {
 
     Ok(dockerfiles)
 }
-
-fn main() {
-    match find_all_dockerfiles() {
-        Ok(files) => {
-            println!("Найдено Dockerfile-ов: {}", files.len());
-            for file in files {
-                println!(" - {}", file.display());
-            }
-        }
-        Err(err) => {
-            eprintln!("Ошибка при поиске файлов: {err}");
-        }
-    }
-}
