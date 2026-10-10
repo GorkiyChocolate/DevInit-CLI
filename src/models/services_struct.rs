@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 /// Lists predefined service recipes.
+/// d
 pub enum Services {
     #[serde(rename = "postgresql")]
     PostgreSQL,
