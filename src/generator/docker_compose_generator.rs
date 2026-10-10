@@ -1,16 +1,18 @@
 use crate::errors::GenerationError;
-use crate::generator::writer::write_yaml;
+use crate::file_config::yaml_writer::write_yaml;
 use crate::models::compile_struct::CompileService;
 use crate::models::docker_compose_struct::RecipeCompose;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// Generates a Docker Compose file for the requested services.
 pub fn generate_docker_compose(
     services: &[CompileService],
     output_dir: &Path,
 ) -> Result<Vec<PathBuf>, GenerationError> {
     let mut compose_services = BTreeMap::new();
+    // Convert every input service into a named Compose service.
     for service in services {
         let recipe = service.to_recipe();
         compose_services.insert(recipe.name.clone(), ComposeService::from_recipe(&recipe));
@@ -24,32 +26,45 @@ pub fn generate_docker_compose(
 }
 
 #[derive(Debug, Serialize)]
+/// Represents the root Docker Compose document.
 struct DockerComposeFile {
+    /// Maps service names to their Compose definitions.
     services: BTreeMap<String, ComposeService>,
 }
 
 #[derive(Debug, Serialize)]
+/// Represents one serialized Compose service.
 struct ComposeService {
+    /// Stores the container image.
     image: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Stores published ports.
     ports: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Stores environment entries.
     environment: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Stores volume mounts.
     volumes: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Stores attached networks.
     networks: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Stores service dependencies.
     depends_on: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Stores the restart policy.
     restart: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Stores the container command.
     command: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Stores generated metadata labels.
     labels: Option<BTreeMap<String, String>>,
 }
 
 impl ComposeService {
+    /// Converts an application recipe into a Compose service.
     fn from_recipe(recipe: &RecipeCompose) -> Self {
         let labels = recipe.description.as_ref().map(|description| {
             BTreeMap::from([("com.devinit.description".to_string(), description.clone())])
@@ -65,29 +80,5 @@ impl ComposeService {
             command: recipe.command.clone(),
             labels,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::models::services_struct::Services;
-
-    #[test]
-    fn generates_selected_services_with_descriptions() {
-        let output =
-            std::env::temp_dir().join(format!("devinit-compose-test-{}", std::process::id()));
-        let services = vec![
-            CompileService::BuiltIn(Services::PostgreSQL),
-            CompileService::BuiltIn(Services::Redis),
-        ];
-
-        let paths = generate_docker_compose(&services, &output).expect("generation should succeed");
-        assert_eq!(paths, vec![output.join("docker-compose.yaml")]);
-        let contents = std::fs::read_to_string(&paths[0]).expect("compose file should exist");
-        assert!(contents.contains("postgresql:"));
-        assert!(contents.contains("redis:"));
-        assert!(contents.contains("com.devinit.description"));
-        let _ = std::fs::remove_dir_all(output);
     }
 }

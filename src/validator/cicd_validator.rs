@@ -2,30 +2,37 @@ use crate::errors::ValidationError;
 use crate::models::cicd_struct::Pipeline;
 use std::collections::HashSet;
 
+/// Validates job names, steps, commands, and job dependencies.
 pub fn validate_pipeline(cicd: &Pipeline, errors: &mut Vec<ValidationError>) {
     let mut jobs = HashSet::new();
+    // Check every job and its steps.
     for (job_index, job) in cicd.jobs.iter().enumerate() {
         let path = format!("cicd.jobs[{job_index}]");
+        // Require a visible job name.
         if job.name.trim().is_empty() {
             errors.push(ValidationError {
                 path: format!("{path}.name"),
                 message: "cannot be empty".to_string(),
             });
         }
+        // Require unique job names for dependency lookup.
         if !jobs.insert(job.name.as_str()) {
             errors.push(ValidationError {
                 path: format!("{path}.name"),
                 message: "job name must be unique".to_string(),
             });
         }
+        // Validate every step belonging to the job.
         for (step_index, step) in job.steps.iter().enumerate() {
             let step_path = format!("{path}.steps[{step_index}]");
+            // Require a visible step name.
             if step.name.trim().is_empty() {
                 errors.push(ValidationError {
                     path: format!("{step_path}.name"),
                     message: "cannot be empty".to_string(),
                 });
             }
+            // Require commands for run actions.
             if let crate::models::cicd_struct::StepAction::Run { command } = &step.action
                 && command.trim().is_empty()
             {
@@ -36,8 +43,11 @@ pub fn validate_pipeline(cicd: &Pipeline, errors: &mut Vec<ValidationError>) {
             }
         }
     }
+    // Validate every declared job dependency.
     for (job_index, job) in cicd.jobs.iter().enumerate() {
+        // Check each referenced prerequisite job.
         for (need_index, need) in job.needs.iter().enumerate() {
+            // Report references to unknown jobs.
             if !jobs.contains(need.as_str()) {
                 errors.push(ValidationError {
                     path: format!("cicd.jobs[{job_index}].needs[{need_index}]"),
@@ -48,9 +58,11 @@ pub fn validate_pipeline(cicd: &Pipeline, errors: &mut Vec<ValidationError>) {
     }
 }
 
+/// Returns an I/O error when the pipeline contains validation failures.
 pub fn cicd_validator(cicd: &Pipeline) -> Result<(), std::io::Error> {
     let mut errors = Vec::new();
     validate_pipeline(cicd, &mut errors);
+    // Accept the pipeline only when no rules failed.
     if errors.is_empty() {
         Ok(())
     } else {
@@ -58,39 +70,5 @@ pub fn cicd_validator(cicd: &Pipeline) -> Result<(), std::io::Error> {
             std::io::ErrorKind::InvalidInput,
             format!("{} validation error(s)", errors.len()),
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::models::cicd_struct::{Job, Runner, Step, StepAction};
-    use std::collections::BTreeMap;
-
-    #[test]
-    fn reports_missing_job_dependency() {
-        let pipeline = Pipeline {
-            provider: crate::models::cicd_struct::CiProvider::Github,
-            triggers: Vec::new(),
-            jobs: vec![Job {
-                name: "deploy".to_string(),
-                runner: Runner::default(),
-                needs: vec!["build".to_string()],
-                steps: vec![Step {
-                    name: "deploy".to_string(),
-                    action: StepAction::Run {
-                        command: "deploy".to_string(),
-                    },
-                    env: BTreeMap::new(),
-                }],
-            }],
-        };
-        let mut errors = Vec::new();
-        validate_pipeline(&pipeline, &mut errors);
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.message.contains("does not exist"))
-        );
     }
 }

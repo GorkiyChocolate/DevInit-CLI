@@ -1,12 +1,16 @@
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Describes one configuration validation failure.
 pub struct ValidationError {
+    /// Identifies the invalid configuration location.
     pub path: String,
+    /// Explains why the value is invalid.
     pub message: String,
 }
 
 #[derive(Debug, Error)]
+/// Represents failures while generating output files.
 pub enum GenerationError {
     #[error("generation I/O failed: {0}")]
     Io(#[from] std::io::Error),
@@ -16,6 +20,7 @@ pub enum GenerationError {
 }
 
 #[derive(Error, Debug)]
+/// Represents errors exposed by the CLI workflow.
 pub enum DevinitError {
     #[error("HTTP request failed: {0}")]
     HttpRequestError(#[from] reqwest::Error),

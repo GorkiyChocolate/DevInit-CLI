@@ -1,6 +1,7 @@
 use crate::models::docker_compose_struct::ConfigsList;
 use reqwest::blocking::Client;
 
+/// Fetches a list of service configurations from the API.
 pub fn get_config(
     config_url: &str,
     config_name: &str,

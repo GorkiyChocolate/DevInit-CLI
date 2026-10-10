@@ -1,5 +1,6 @@
 use clap::{Arg, Command};
 
+/// Builds the top-level CLI command and its subcommands.
 pub fn build_cli() -> Command {
     Command::new("devinit")
         .version("0.0.2")
@@ -15,6 +16,7 @@ pub fn build_cli() -> Command {
         .subcommand(build_test_cli())
 }
 
+/// Builds the service-add command.
 fn build_add_cli() -> Command {
     Command::new("add")
         .about("Adding dependency")
@@ -39,6 +41,7 @@ fn build_add_cli() -> Command {
         )
 }
 
+/// Builds the service-list command.
 fn build_list_cli() -> Command {
     Command::new("list")
         .about("List of services")
@@ -56,6 +59,7 @@ fn build_list_cli() -> Command {
         )
 }
 
+/// Builds the configuration-get command.
 fn build_get_cli() -> Command {
     Command::new("get")
         .about("Importing services repo like space")
@@ -67,6 +71,7 @@ fn build_get_cli() -> Command {
         )
 }
 
+/// Builds the license command.
 fn build_license_cli() -> Command {
     Command::new("license").about("Lincensing project").arg(
         Arg::new("license_type")
@@ -76,6 +81,7 @@ fn build_license_cli() -> Command {
     )
 }
 
+/// Builds the login command.
 fn build_login_cli() -> Command {
     Command::new("login").about("Autentication").arg(
         Arg::new("login_url")
@@ -85,10 +91,12 @@ fn build_login_cli() -> Command {
     )
 }
 
+/// Builds the compile command.
 fn build_compile_cli() -> Command {
     Command::new("compile").about("validate and generate compile.yaml")
 }
 
+/// Builds the test command.
 fn build_test_cli() -> Command {
     Command::new("test")
         .about("testing")

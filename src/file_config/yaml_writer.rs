@@ -3,7 +3,9 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Serializes a value to YAML and atomically replaces the target file.
 pub fn write_yaml<T: Serialize>(value: &T, path: &Path) -> Result<PathBuf, GenerationError> {
+    // Create the output directory when the path has a parent.
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }

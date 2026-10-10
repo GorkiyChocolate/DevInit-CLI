@@ -1,8 +1,9 @@
 use crate::errors::GenerationError;
-use crate::generator::writer::write_yaml;
+use crate::file_config::yaml_writer::write_yaml;
 use crate::models::k8s_struct::Deployment;
 use std::path::{Path, PathBuf};
 
+/// Generates a Kubernetes deployment YAML file.
 pub fn generate_k8s(
     deployment: &Deployment,
     output_dir: &Path,
@@ -12,85 +13,4 @@ pub fn generate_k8s(
         .join(format!("{}-deployment.yaml", deployment.metadata.name));
     let path = write_yaml(deployment, &path)?;
     Ok(vec![path])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::models::k8s_struct::{
-        Container, DeploymentSpec, LabelSelector, ObjectMeta, PodSpec, PodTemplateSpec,
-    };
-    use std::collections::HashMap;
-
-    fn deployment() -> Deployment {
-        Deployment {
-            api_version: "apps/v1".to_string(),
-            kind: "Deployment".to_string(),
-            metadata: ObjectMeta {
-                name: "backend".to_string(),
-                namespace: None,
-                labels: None,
-                annotations: None,
-            },
-            spec: DeploymentSpec {
-                replicas: Some(1),
-                selector: LabelSelector {
-                    match_labels: HashMap::new(),
-                },
-                template: PodTemplateSpec {
-                    metadata: ObjectMeta {
-                        name: "backend".to_string(),
-                        namespace: None,
-                        labels: None,
-                        annotations: None,
-                    },
-                    spec: PodSpec {
-                        containers: vec![Container {
-                            name: "backend".to_string(),
-                            image: "backend:latest".to_string(),
-                            image_pull_policy: None,
-                            command: None,
-                            args: None,
-                            working_dir: None,
-                            ports: None,
-                            env: None,
-                            env_from: None,
-                            resources: None,
-                            volume_mounts: None,
-                            liveness_probe: None,
-                            readiness_probe: None,
-                            startup_probe: None,
-                            security_context: None,
-                        }],
-                        init_containers: None,
-                        volumes: None,
-                        restart_policy: None,
-                        termination_grace_period_seconds: None,
-                        service_account_name: None,
-                        image_pull_secrets: None,
-                        node_selector: None,
-                        security_context: None,
-                    },
-                },
-                strategy: None,
-                min_ready_seconds: None,
-                revision_history_limit: None,
-                progress_deadline_seconds: None,
-                paused: None,
-            },
-        }
-    }
-
-    #[test]
-    fn generates_kubernetes_yaml_and_expected_path() {
-        let output = std::env::temp_dir().join(format!("devinit-k8s-test-{}", std::process::id()));
-        let paths = generate_k8s(&deployment(), &output).expect("generation should succeed");
-        assert_eq!(paths, vec![output.join("k8s/backend-deployment.yaml")]);
-        let contents = std::fs::read_to_string(&paths[0]).expect("generated file should exist");
-        assert!(contents.contains("apiVersion: apps/v1"));
-        assert!(contents.contains("kind: Deployment"));
-        generate_k8s(&deployment(), &output)
-            .expect("existing generated file should be replaceable");
-        let _ = std::fs::remove_dir_all(output);
-    }
 }

@@ -1,6 +1,7 @@
 use crate::models::docker_compose_struct::RecipeCompose;
 use reqwest::blocking::Client;
 
+/// Fetches one service recipe from the configured API.
 pub fn add_recipe(
     recipe_name: &str,
     base_url: &str,

@@ -9,7 +9,9 @@ pub mod cli {
 }
 pub mod file_config {
     pub mod env_config;
+    pub mod file_validator;
     pub mod yaml_config;
+    pub mod yaml_writer;
 }
 pub mod models {
     pub mod cicd_struct;
@@ -17,6 +19,7 @@ pub mod models {
     pub mod docker_compose_struct;
     pub mod env_struct;
     pub mod k8s_struct;
+    pub mod resolver_struct;
     pub mod services_struct;
 }
 
@@ -26,8 +29,14 @@ pub mod validator {
     pub mod k8s_validator;
     pub mod services_validator;
 }
+pub mod resolved_spec {
 
-pub mod generator;
+    pub mod resolver;
+}
+
+pub mod docker {
+    pub mod docker_finder;
+}
 
 pub mod errors;
-pub use crate::cli::cli_logic::cli_logic;
+pub mod generator;

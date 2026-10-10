@@ -1,27 +1,33 @@
 use crate::errors::ValidationError;
 use crate::models::docker_compose_struct::RecipeCompose;
 
+/// Validates a Docker Compose service recipe.
 pub fn validate_service(name: &str, service: &RecipeCompose, errors: &mut Vec<ValidationError>) {
     let base = format!("services.{name}");
+    // Require a non-empty service name.
     if name.trim().is_empty() {
         errors.push(ValidationError {
             path: "services".to_string(),
             message: "service name cannot be empty".to_string(),
         });
     }
+    // Require a container image.
     if service.image.trim().is_empty() {
         errors.push(ValidationError {
             path: format!("{base}.image"),
             message: "cannot be empty".to_string(),
         });
     }
+    // Validate every published port.
     if let Some(ports) = &service.ports {
         for (index, port) in ports.iter().enumerate() {
             validate_port(port, &format!("{base}.ports[{index}]"), errors);
         }
     }
+    // Validate every environment entry.
     if let Some(values) = &service.environment {
         for (index, value) in values.iter().enumerate() {
+            // Require KEY=VALUE syntax with content.
             if value.trim().is_empty() || value.split_once('=').is_none() {
                 errors.push(ValidationError {
                     path: format!("{base}.environment[{index}]"),
@@ -30,8 +36,10 @@ pub fn validate_service(name: &str, service: &RecipeCompose, errors: &mut Vec<Va
             }
         }
     }
+    // Validate every volume entry.
     if let Some(values) = &service.volumes {
         for (index, value) in values.iter().enumerate() {
+            // Reject blank volume declarations.
             if value.trim().is_empty() {
                 errors.push(ValidationError {
                     path: format!("{base}.volumes[{index}]"),
@@ -40,8 +48,10 @@ pub fn validate_service(name: &str, service: &RecipeCompose, errors: &mut Vec<Va
             }
         }
     }
+    // Validate every network entry.
     if let Some(values) = &service.networks {
         for (index, value) in values.iter().enumerate() {
+            // Reject blank network names.
             if value.trim().is_empty() {
                 errors.push(ValidationError {
                     path: format!("{base}.networks[{index}]"),
@@ -50,8 +60,10 @@ pub fn validate_service(name: &str, service: &RecipeCompose, errors: &mut Vec<Va
             }
         }
     }
+    // Validate every dependency name.
     if let Some(values) = &service.depends_on {
         for (index, value) in values.iter().enumerate() {
+            // Reject blank dependency names.
             if value.trim().is_empty() {
                 errors.push(ValidationError {
                     path: format!("{base}.depends_on[{index}]"),
@@ -60,6 +72,7 @@ pub fn validate_service(name: &str, service: &RecipeCompose, errors: &mut Vec<Va
             }
         }
     }
+    // Validate the generated file path when a file is configured.
     if let Some(file) = &service.files
         && file.path.trim().is_empty()
     {
@@ -70,8 +83,10 @@ pub fn validate_service(name: &str, service: &RecipeCompose, errors: &mut Vec<Va
     }
 }
 
+/// Validates the container port portion of a port mapping.
 fn validate_port(value: &str, path: &str, errors: &mut Vec<ValidationError>) {
     let port = value.rsplit(':').next().unwrap_or_default();
+    // Accept only numeric, non-zero ports.
     match port.parse::<u16>() {
         Ok(0) | Err(_) => errors.push(ValidationError {
             path: path.to_string(),
@@ -79,64 +94,4 @@ fn validate_port(value: &str, path: &str, errors: &mut Vec<ValidationError>) {
         }),
         Ok(_) => {}
     }
-}
-
-pub fn validate_postgresql_service() -> bool {
-    // Implementation for validating PostgreSQL service
-    true
-}
-
-pub fn validate_mysql_service() -> bool {
-    // Implementation for validating MySQL service
-    true
-}
-
-pub fn validate_mongodb_service() -> bool {
-    // Implementation for validating MongoDB service
-    true
-}
-
-pub fn validate_mariadb_service() -> bool {
-    // Implementation for validating MariaDB service
-    true
-}
-
-pub fn validate_elasticsearch_service() -> bool {
-    // Implementation for validating Elasticsearch service
-    true
-}
-
-pub fn validate_prometheus_service() -> bool {
-    // Implementation for validating Prometheus service
-    true
-}
-
-pub fn validate_grafana_service() -> bool {
-    // Implementation for validating Grafana service
-    true
-}
-
-pub fn validate_redis_service() -> bool {
-    // Implementation for validating Redis service
-    true
-}
-
-pub fn validate_rabbitmq_service() -> bool {
-    // Implementation for validating RabbitMQ service
-    true
-}
-
-pub fn validate_kafka_service() -> bool {
-    // Implementation for validating Kafka service
-    true
-}
-
-pub fn validate_s3_service() -> bool {
-    // Implementation for validating S3 service
-    true
-}
-
-pub fn validate_ec2_service() -> bool {
-    // Implementation for validating EC2 service
-    true
 }

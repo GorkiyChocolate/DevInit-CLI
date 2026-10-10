@@ -1,8 +1,40 @@
 services:
   - postgresql
   - redis
-  - rabbitmq
+  - name: api-service
+    description: Core API Backend Service
+    image: ghcr.io/my-org/api-service:v1.0.0
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgres://postgres:5432/main_db
+      - REDIS_URL=redis://redis:6379
+      - APP_PORT=8080
+    depends_on:
+      - postgresql
+      - redis
+    restart: unless-stopped
 
 kubernetes: null
 
-cicd: null
+cicd:
+  provider: github
+  triggers:
+    - type: push
+      branches:
+        - main
+    - type: pull_request
+      branches:
+        - main
+  jobs:
+    - name: test-and-build
+      runner: ubuntu-latest
+      steps:
+        - name: Checkout Code
+          action: checkout
+        - name: Run Tests
+          action: run
+          command: cargo test
+        - name: Build Application
+          action: run
+          command: cargo build --release --locked

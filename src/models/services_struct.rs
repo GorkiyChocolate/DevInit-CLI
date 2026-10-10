@@ -1,9 +1,10 @@
 use crate::models::docker_compose_struct::RecipeCompose;
-use crate::validator::services_validator;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Lists predefined service recipes.
+/// d
 pub enum Services {
     #[serde(rename = "postgresql")]
     PostgreSQL,
@@ -32,6 +33,7 @@ pub enum Services {
 }
 
 impl Services {
+    /// Converts a predefined service into a Compose recipe.
     pub fn to_recipe(&self) -> RecipeCompose {
         let (name, description, image, ports, command) = match self {
             Self::PostgreSQL => (
@@ -138,33 +140,27 @@ impl Services {
     }
 }
 pub fn services_selector(services: Services) -> Result<(), std::io::Error> {
+    // Report the selected service category.
     match services {
         Services::Elasticsearch => {
-            services_validator::validate_elasticsearch_service();
             println!("Elasticsearch service selected");
         }
         Services::Grafana => {
-            services_validator::validate_grafana_service();
             println!("Grafana service selected");
         }
         Services::Redis => {
-            services_validator::validate_redis_service();
             println!("Redis service selected");
         }
         Services::RabbitMQ => {
-            services_validator::validate_rabbitmq_service();
             println!("RabbitMQ service selected");
         }
         Services::Kafka => {
-            services_validator::validate_kafka_service();
             println!("Kafka service selected");
         }
         Services::S3 => {
-            services_validator::validate_s3_service();
             println!("S3 service selected");
         }
         Services::EC2 => {
-            services_validator::validate_ec2_service();
             println!("EC2 service selected");
         }
         _ => {
