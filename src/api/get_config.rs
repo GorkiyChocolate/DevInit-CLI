@@ -1,7 +1,8 @@
 use crate::models::docker_compose_struct::ConfigsList;
-use reqwest::Client;
+use reqwest::blocking::Client;
 
-pub async fn get_config(
+/// Fetches a list of service configurations from the API.
+pub fn get_config(
     config_url: &str,
     config_name: &str,
 ) -> Result<ConfigsList, Box<dyn std::error::Error>> {
@@ -10,11 +11,9 @@ pub async fn get_config(
     let configs_list = Client::new()
         .get(&url)
         .header("Accept", "application/json")
-        .send()
-        .await?
+        .send()?
         .error_for_status()?
-        .json::<ConfigsList>()
-        .await?;
+        .json::<ConfigsList>()?;
 
     Ok(configs_list)
 }

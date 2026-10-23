@@ -1,0 +1,54 @@
+services:
+  - postgresql
+  - name: order-processor
+    description: Asynchronous order processing worker
+    image: registry.gitlab.com/company/order-processor:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=postgresql
+      - WORKER_CONCURRENCY=4
+    depends_on:
+      - postgresql
+    restart: unless-stopped
+
+kubernetes:
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: order-processor
+  spec:
+    replicas: 2
+    selector:
+      matchLabels:
+        app: order-processor
+    template:
+      metadata:
+        name: order-processor
+        labels:
+          app: order-processor
+      spec:
+        containers:
+          - name: order-processor
+            image: registry.gitlab.com/company/order-processor:latest
+            ports:
+              - containerPort: 8000
+
+cicd:
+  provider: gitlab
+  jobs:
+    - name: test
+      runner: ubuntu-latest
+      steps:
+        - name: Unit Tests
+          action: run
+          command: cargo test --verbose
+    - name: build-image
+      runner: ubuntu-latest
+      needs:
+        - test
+      steps:
+        - name: Build Docker Image
+          action: docker_build
+          dockerfile: Dockerfile
+          image: registry.gitlab.com/company/order-processor:latest
