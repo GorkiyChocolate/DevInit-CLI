@@ -1,0 +1,66 @@
+services:
+  postgresql:
+    image: postgres:16
+    description: PostgreSQL database
+    ports:
+      - "5432:5432"
+  mysql:
+    image: mysql:8.4
+    description: MySQL database
+    ports:
+      - "3306:3306"
+  mongodb:
+    image: mongo:7
+    description: MongoDB document database
+    ports:
+      - "27017:27017"
+  mariadb:
+    image: mariadb:11
+    description: MariaDB relational database
+    ports:
+      - "3306:3306"
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    description: Elasticsearch search engine
+    ports:
+      - "9200:9200"
+  prometheus:
+    image: prom/prometheus:latest
+    description: Prometheus metrics collector
+    ports:
+      - "9090:9090"
+  grafana:
+    image: grafana/grafana:latest
+    description: Grafana dashboards
+    ports:
+      - "3000:3000"
+  redis:
+    image: redis:7
+    description: Redis in-memory data store
+    ports:
+      - "6379:6379"
+  rabbitmq:
+    image: rabbitmq:3-management
+    description: RabbitMQ message broker
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+  kafka:
+    image: bitnami/kafka:3.8
+    description: Apache Kafka event streaming platform
+    ports:
+      - "9092:9092"
+  s3:
+    image: minio/minio:latest
+    description: S3-compatible object storage
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command:
+      - server
+      - /data
+  ec2:
+    image: localstack/localstack:latest
+    description: LocalStack AWS service emulator
+    ports:
+      - "4566:4566"
