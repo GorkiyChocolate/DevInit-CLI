@@ -37,8 +37,8 @@ fn print_validation_errors(errors: &[ValidationError]) {
 
 /// Dispatches command-line subcommands to their handlers.
 pub fn cli_logic() -> Result<(), DevinitError> {
-    let base_url = "http://127.0.0.1:3000/services/";
-    let configs_url = "http://127.0.0.1:3000/configs/";
+    let base_url = "http://localhost:5167/services/";
+    let configs_url = "http://localhost:5167/configs/";
     let matches = commands::build_cli().get_matches();
 
     // Execute the handler matching the selected subcommand.
