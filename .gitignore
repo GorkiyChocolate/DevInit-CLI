@@ -1,0 +1,9 @@
+/target
+json.json
+/.vscode
+NeedToLearn.md
+compose.yaml
+compose.yaml.example
+env.example
+/resources
+.github/
