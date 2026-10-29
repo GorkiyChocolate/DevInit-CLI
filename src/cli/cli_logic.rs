@@ -25,25 +25,23 @@ pub fn compile_at_with_options(
     output_dir: &Path,
     force: bool,
 ) -> Result<Vec<PathBuf>, DevinitError> {
-    // Parse and resolve the existing compile specification.
+    // 1. Load YAML and resolve service recipes.
     let spec = load_compile_with_registry(input_path)?;
 
-    // Load arbitrary user-defined Kubernetes manifests.
+    // 2. Load and expand user-defined Kubernetes manifests.
     let manifests = crate::k8s_manifests::load_manifests(input_path)?;
 
-    // Build and validate the intermediate representation.
+    // 3. Build the validated intermediate representation.
     let ir = crate::ir::ResolvedCompileSpec::build(spec).map_err(DevinitError::ValidationErrors)?;
 
-    // Check all custom manifest paths before generating files.
-    crate::k8s_manifests::preflight(&manifests, output_dir, force, ir.spec().kubernetes.as_ref())?;
+    // 4. Render every output file in memory.
+    let plan = generator::build_generation_plan(ir.spec(), &manifests)?;
 
-    // Generate existing Compose, Kubernetes and CI/CD outputs.
-    let mut generated = generator::generate_with_options(ir.spec(), output_dir, force)?;
+    // 5. Check all output conflicts before writing.
+    plan.preflight(output_dir, force)?;
 
-    // Generate arbitrary Kubernetes manifests.
-    generated.extend(crate::k8s_manifests::write_manifests(
-        &manifests, output_dir, force,
-    )?);
+    // 6. Write files through the centralized writer.
+    let generated = plan.write(output_dir, force)?;
 
     Ok(generated)
 }
