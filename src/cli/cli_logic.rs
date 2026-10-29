@@ -393,7 +393,19 @@ pub fn cli_logic() -> Result<(), DevinitError> {
         }
 
         Some(("check", _)) => {
-            let count = check_at(Path::new("compile.yaml"))?;
+            let count = match check_at(Path::new("compile.yaml")) {
+                Ok(count) => count,
+
+                Err(DevinitError::ValidationErrors(errors)) => {
+                    print_validation_errors(&errors);
+                    return Err(DevinitError::ValidationErrors(errors));
+                }
+
+                Err(error) => {
+                    eprintln!("Check failed: {error}");
+                    return Err(error);
+                }
+            };
 
             println!("DevInit Configuration Check");
             println!("\n✓ compile.yaml loaded");

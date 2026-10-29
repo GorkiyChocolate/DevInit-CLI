@@ -1,6 +1,6 @@
 use crate::errors::ValidationError;
 use crate::models::cicd_struct::Pipeline;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Validates job names, steps, commands, and job dependencies.
 pub fn validate_pipeline(cicd: &Pipeline, errors: &mut Vec<ValidationError>) {
@@ -56,6 +56,75 @@ pub fn validate_pipeline(cicd: &Pipeline, errors: &mut Vec<ValidationError>) {
             }
         }
     }
+    validate_job_cycles(cicd, errors);
+}
+
+/// Detects circular dependencies between CI/CD jobs.
+fn validate_job_cycles(cicd: &Pipeline, errors: &mut Vec<ValidationError>) {
+    let indexes: HashMap<&str, usize> = cicd
+        .jobs
+        .iter()
+        .enumerate()
+        .map(|(index, job)| (job.name.as_str(), index))
+        .collect();
+
+    let mut states = vec![0u8; cicd.jobs.len()];
+    let mut stack = Vec::new();
+
+    for index in 0..cicd.jobs.len() {
+        if states[index] == 0 {
+            visit_job(index, cicd, &indexes, &mut states, &mut stack, errors);
+        }
+    }
+}
+
+fn visit_job(
+    index: usize,
+    cicd: &Pipeline,
+    indexes: &HashMap<&str, usize>,
+    states: &mut [u8],
+    stack: &mut Vec<usize>,
+    errors: &mut Vec<ValidationError>,
+) {
+    states[index] = 1;
+    stack.push(index);
+
+    for dependency in &cicd.jobs[index].needs {
+        let Some(&next) = indexes.get(dependency.as_str()) else {
+            // Missing dependencies are reported by the existing validator.
+            continue;
+        };
+
+        match states[next] {
+            0 => {
+                visit_job(next, cicd, indexes, states, stack, errors);
+            }
+
+            1 => {
+                if let Some(position) = stack.iter().position(|&node| node == next) {
+                    let mut cycle: Vec<&str> = stack[position..]
+                        .iter()
+                        .map(|&node| cicd.jobs[node].name.as_str())
+                        .collect();
+
+                    cycle.push(cicd.jobs[next].name.as_str());
+
+                    errors.push(ValidationError {
+                        path: format!("cicd.jobs[{index}].needs"),
+                        message: format!(
+                            "circular job dependency detected: {}",
+                            cycle.join(" -> ")
+                        ),
+                    });
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    stack.pop();
+    states[index] = 2;
 }
 
 /// Returns an I/O error when the pipeline contains validation failures.
@@ -70,5 +139,78 @@ pub fn cicd_validator(cicd: &Pipeline) -> Result<(), std::io::Error> {
             std::io::ErrorKind::InvalidInput,
             format!("{} validation error(s)", errors.len()),
         ))
+    }
+}
+
+#[cfg(test)]
+mod cycle_tests {
+    use super::*;
+
+    fn validate(yaml: &str) -> Vec<ValidationError> {
+        let pipeline: Pipeline = serde_yaml::from_str(yaml).unwrap();
+        let mut errors = Vec::new();
+
+        validate_pipeline(&pipeline, &mut errors);
+
+        errors
+    }
+
+    #[test]
+    fn rejects_circular_job_dependencies() {
+        let errors = validate(
+            r#"
+provider: github
+jobs:
+  - name: build
+    needs: [test]
+  - name: test
+    needs: [build]
+"#,
+        );
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| { error.message.contains("circular job dependency") })
+        );
+    }
+
+    #[test]
+    fn rejects_self_referencing_job() {
+        let errors = validate(
+            r#"
+provider: github
+jobs:
+  - name: build
+    needs: [build]
+"#,
+        );
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| { error.message.contains("build -> build") })
+        );
+    }
+
+    #[test]
+    fn accepts_acyclic_job_dependencies() {
+        let errors = validate(
+            r#"
+provider: github
+jobs:
+  - name: build
+  - name: test
+    needs: [build]
+  - name: publish
+    needs: [test]
+"#,
+        );
+
+        assert!(
+            !errors
+                .iter()
+                .any(|error| { error.message.contains("circular job dependency") })
+        );
     }
 }

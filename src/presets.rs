@@ -14,25 +14,37 @@ fn key(name: &str) -> Value {
 }
 
 fn global_config_path() -> Result<PathBuf, DevinitError> {
-    if let Some(xdg_home) = std::env::var_os("XDG_CONFIG_HOME")
-        && !xdg_home.is_empty()
+    #[cfg(target_os = "windows")]
     {
-        let base = PathBuf::from(xdg_home);
+        let appdata = std::env::var_os("APPDATA").ok_or_else(|| {
+            DevinitError::ConfigurationError("APPDATA environment variable is not defined".into())
+        })?;
 
-        if !base.is_absolute() {
-            return Err(DevinitError::ConfigurationError(
-                "XDG_CONFIG_HOME must be an absolute path".into(),
-            ));
-        }
-
-        return Ok(base.join("devinit/devinit.yaml"));
+        return Ok(PathBuf::from(appdata).join("DevInit").join("devinit.yaml"));
     }
 
-    let home = std::env::var_os("HOME").ok_or_else(|| {
-        DevinitError::ConfigurationError("HOME environment variable is not defined".into())
-    })?;
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(xdg_home) = std::env::var_os("XDG_CONFIG_HOME")
+            && !xdg_home.is_empty()
+        {
+            let base = PathBuf::from(xdg_home);
 
-    Ok(PathBuf::from(home).join(".config/devinit/devinit.yaml"))
+            if !base.is_absolute() {
+                return Err(DevinitError::ConfigurationError(
+                    "XDG_CONFIG_HOME must be an absolute path".into(),
+                ));
+            }
+
+            return Ok(base.join("devinit/devinit.yaml"));
+        }
+
+        let home = std::env::var_os("HOME").ok_or_else(|| {
+            DevinitError::ConfigurationError("HOME environment variable is not defined".into())
+        })?;
+
+        Ok(PathBuf::from(home).join(".config/devinit/devinit.yaml"))
+    }
 }
 
 fn read_presets_from(path: &Path) -> Result<Option<Value>, DevinitError> {
