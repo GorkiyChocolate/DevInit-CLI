@@ -1,5 +1,6 @@
 use crate::errors::{DevinitError, GenerationError};
 use crate::file_config::yaml_writer::write_yaml_with_options;
+use crate::generation_plan::GeneratedFile;
 use crate::models::k8s_struct::Deployment;
 
 use serde_yaml::Value;
@@ -13,6 +14,28 @@ use std::path::{Path, PathBuf};
 pub struct KubernetesManifest {
     pub file_name: String,
     pub document: Value,
+}
+
+/// Prepares user-defined Kubernetes manifests.
+///
+/// Supports both raw resources and previously expanded templates.
+/// Does not write anything to the filesystem.
+pub fn plan_custom_manifests(
+    manifests: &[KubernetesManifest],
+) -> Result<Vec<GeneratedFile>, GenerationError> {
+    let mut files = Vec::with_capacity(manifests.len());
+
+    for manifest in manifests {
+        let yaml = serde_yaml::to_string(&manifest.document)?;
+
+        let file = GeneratedFile::new(format!("k8s/{}.yaml", manifest.file_name), yaml)?;
+
+        files.push(file);
+    }
+
+    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+
+    Ok(files)
 }
 
 fn invalid(message: impl Into<String>) -> DevinitError {
@@ -637,5 +660,110 @@ unknownField: true
         .unwrap();
 
         assert!(expand_template(&resource).is_err());
+    }
+
+    #[test]
+    fn plans_custom_manifest_without_writing() {
+        let document: Value = serde_yaml::from_str(
+            r#"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  APP_ENV: production
+"#,
+        )
+        .unwrap();
+
+        let manifests = vec![KubernetesManifest {
+            file_name: "app-config".into(),
+            document,
+        }];
+
+        let files = plan_custom_manifests(&manifests).unwrap();
+
+        assert_eq!(files.len(), 1);
+
+        assert_eq!(files[0].relative_path, PathBuf::from("k8s/app-config.yaml"));
+
+        let parsed: Value = serde_yaml::from_str(&files[0].contents).unwrap();
+
+        assert_eq!(parsed["kind"].as_str(), Some("ConfigMap"));
+    }
+
+    #[test]
+    fn plans_multiple_custom_manifests_in_sorted_order() {
+        let first: Value = serde_yaml::from_str(
+            r#"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: z-config
+"#,
+        )
+        .unwrap();
+
+        let second: Value = serde_yaml::from_str(
+            r#"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: a-config
+"#,
+        )
+        .unwrap();
+
+        let manifests = vec![
+            KubernetesManifest {
+                file_name: "z-config".into(),
+                document: first,
+            },
+            KubernetesManifest {
+                file_name: "a-config".into(),
+                document: second,
+            },
+        ];
+
+        let files = plan_custom_manifests(&manifests).unwrap();
+
+        assert_eq!(
+            files
+                .iter()
+                .map(|file| file.relative_path.as_path())
+                .collect::<Vec<_>>(),
+            vec![
+                Path::new("k8s/a-config.yaml"),
+                Path::new("k8s/z-config.yaml"),
+            ]
+        );
+    }
+
+    #[test]
+    fn combined_plan_rejects_duplicate_custom_output_paths() {
+        let document: Value = serde_yaml::from_str(
+            r#"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: settings
+"#,
+        )
+        .unwrap();
+
+        let manifests = vec![
+            KubernetesManifest {
+                file_name: "settings".into(),
+                document: document.clone(),
+            },
+            KubernetesManifest {
+                file_name: "settings".into(),
+                document,
+            },
+        ];
+
+        let result = crate::generator::k8s_generator::plan_all_kubernetes(None, &manifests);
+
+        assert!(result.is_err());
     }
 }

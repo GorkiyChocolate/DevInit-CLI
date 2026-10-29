@@ -10,3 +10,5 @@ env.example
 .devinit
 cli/.devinit
 /k8s
+*compile
+compile*

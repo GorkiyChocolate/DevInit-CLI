@@ -1,5 +1,6 @@
 use crate::errors::GenerationError;
 use crate::file_config::yaml_writer::write_yaml_with_options;
+use crate::generation_plan::GeneratedFile;
 use crate::models::compile_struct::CompileService;
 use crate::models::docker_compose_struct::RecipeCompose;
 use serde::Serialize;
@@ -19,10 +20,26 @@ pub fn generate_docker_compose_with_options(
     output_dir: &Path,
     force: bool,
 ) -> Result<Vec<PathBuf>, GenerationError> {
+    let generated = plan_docker_compose(services)?;
+
+    let destination = output_dir.join(&generated.relative_path);
+
+    let written = write_yaml_with_options(
+        &serde_yaml::from_str::<serde_yaml::Value>(&generated.contents)?,
+        &destination,
+        force,
+    )?;
+
+    Ok(vec![written])
+}
+
+/// Converts Compose services into YAML without filesystem writes.
+pub fn render_docker_compose(services: &[CompileService]) -> Result<String, GenerationError> {
     let mut compose_services = BTreeMap::new();
-    // Convert every input service into a named Compose service.
+
     for service in services {
         let recipe = service.to_recipe();
+
         compose_services.insert(recipe.name.clone(), ComposeService::from_recipe(&recipe));
     }
 
@@ -30,8 +47,15 @@ pub fn generate_docker_compose_with_options(
         services: compose_services,
         volumes: collect_named_volumes(services),
     };
-    let path = write_yaml_with_options(&compose, &output_dir.join("docker-compose.yaml"), force)?;
-    Ok(vec![path])
+
+    Ok(serde_yaml::to_string(&compose)?)
+}
+
+/// Prepares a Docker Compose file without writing it.
+pub fn plan_docker_compose(services: &[CompileService]) -> Result<GeneratedFile, GenerationError> {
+    let yaml = render_docker_compose(services)?;
+
+    GeneratedFile::new("docker-compose.yaml", yaml)
 }
 
 #[derive(Debug, Serialize)]
@@ -194,5 +218,65 @@ mod tests {
     #[test]
     fn rejects_invalid_volume_name() {
         assert_eq!(named_volume("invalid name:/data"), None);
+    }
+
+    #[test]
+    fn renders_compose_without_writing_files() {
+        let services: Vec<CompileService> = serde_yaml::from_str(
+            r#"
+- name: redis
+  image: redis:7
+  ports:
+    - "6379:6379"
+"#,
+        )
+        .unwrap();
+
+        let yaml = render_docker_compose(&services).unwrap();
+
+        let document: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(
+            document["services"]["redis"]["image"].as_str(),
+            Some("redis:7")
+        );
+    }
+
+    #[test]
+    fn plans_compose_file() {
+        let services: Vec<CompileService> = serde_yaml::from_str(
+            r#"
+- name: postgres
+  image: postgres:17
+"#,
+        )
+        .unwrap();
+
+        let generated = plan_docker_compose(&services).unwrap();
+
+        assert_eq!(
+            generated.relative_path,
+            std::path::PathBuf::from("docker-compose.yaml")
+        );
+
+        assert!(generated.contents.contains("postgres:17"));
+    }
+    #[test]
+    fn rendering_preserves_named_volumes() {
+        let services: Vec<CompileService> = serde_yaml::from_str(
+            r#"
+- name: postgres
+  image: postgres:17
+  volumes:
+    - "postgres_data:/var/lib/postgresql/data"
+"#,
+        )
+        .unwrap();
+
+        let yaml = render_docker_compose(&services).unwrap();
+
+        let document: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+
+        assert!(document["volumes"]["postgres_data"].as_mapping().is_some());
     }
 }
