@@ -87,6 +87,8 @@ pub fn load_compile_with_registry(path: &Path) -> Result<CompileSpec, DevinitErr
 
     crate::presets::expand_compose_presets(&mut document, project_root)?;
 
+    crate::presets::expand_infrastructure_presets(&mut document, project_root)?;
+
     // Validate input declarations before resolution.
     crate::validator::project_validator::validate_declarations(&document).map_err(|message| {
         DevinitError::ValidationErrors(vec![ValidationError {

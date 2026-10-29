@@ -279,7 +279,11 @@ spec:
 pub fn load_manifests(path: &Path) -> Result<Vec<KubernetesManifest>, DevinitError> {
     let contents = fs::read_to_string(path).map_err(DevinitError::FileIOError)?;
 
-    let document: Value = serde_yaml::from_str(&contents)?;
+    let mut document: Value = serde_yaml::from_str(&contents)?;
+
+    let project_root = path.parent().unwrap_or_else(|| Path::new("."));
+
+    crate::presets::expand_infrastructure_presets(&mut document, project_root)?;
 
     let Some(k8s) = document.get("k8s") else {
         return Ok(Vec::new());
