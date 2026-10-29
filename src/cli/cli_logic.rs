@@ -117,8 +117,7 @@ pub fn cli_logic() -> Result<(), DevinitError> {
                     )));
                 }
 
-                let base_url = std::env::var("DEVINIT_API_URL")
-                    .unwrap_or_else(|_| "http://localhost:5167".to_string());
+                let base_url = crate::presets::default_url(&cwd)?;
 
                 let url = format!("{}/services/", base_url.trim_end_matches('/'));
 
@@ -191,8 +190,7 @@ pub fn cli_logic() -> Result<(), DevinitError> {
                 println!("✓ Image: {}", recipe.image);
             } else {
                 // Resolve the Backend address.
-                let base_url = env::var("DEVINIT_API_URL")
-                    .unwrap_or_else(|_| "http://localhost:5167".to_string());
+                let base_url = crate::presets::default_url(&cwd)?;
 
                 let configs_url = format!("{}/configs/", base_url.trim_end_matches('/'));
 

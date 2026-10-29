@@ -83,6 +83,10 @@ pub fn load_compile_with_registry(path: &Path) -> Result<CompileSpec, DevinitErr
 
     let mut document: serde_yaml::Value = serde_yaml::from_str(&contents)?;
 
+    let project_root = path.parent().unwrap_or_else(|| Path::new("."));
+
+    crate::presets::expand_compose_presets(&mut document, project_root)?;
+
     // Validate input declarations before resolution.
     crate::validator::project_validator::validate_declarations(&document).map_err(|message| {
         DevinitError::ValidationErrors(vec![ValidationError {

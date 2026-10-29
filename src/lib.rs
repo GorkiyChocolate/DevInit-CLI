@@ -45,5 +45,6 @@ pub mod errors;
 pub mod generation_plan;
 pub mod ir;
 pub mod k8s_manifests;
+pub mod presets;
 pub mod resolver;
 pub mod service_registry;
