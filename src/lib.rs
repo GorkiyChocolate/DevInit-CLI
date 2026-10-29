@@ -26,7 +26,9 @@ pub mod models {
 pub mod validator {
     pub mod cicd_validator;
     pub mod compile_validator;
+    pub mod dependency_graph;
     pub mod k8s_validator;
+    pub mod project_validator;
     pub mod services_validator;
 }
 pub mod resolved_spec {
@@ -40,3 +42,4 @@ pub mod docker {
 
 pub mod errors;
 pub mod generator;
+pub mod service_registry;
