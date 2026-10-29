@@ -1,5 +1,5 @@
 use crate::errors::GenerationError;
-use crate::file_config::yaml_writer::write_yaml;
+use crate::file_config::yaml_writer::write_yaml_with_options;
 use crate::models::cicd_struct::{CiProvider, Pipeline, Runner, StepAction, Trigger};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -10,10 +10,18 @@ pub fn generate_cicd(
     pipeline: &Pipeline,
     output_dir: &Path,
 ) -> Result<Vec<PathBuf>, GenerationError> {
+    generate_cicd_with_options(pipeline, output_dir, false)
+}
+
+pub fn generate_cicd_with_options(
+    pipeline: &Pipeline,
+    output_dir: &Path,
+    force: bool,
+) -> Result<Vec<PathBuf>, GenerationError> {
     // Select the provider-specific output format.
     match pipeline.provider {
-        CiProvider::Github => generate_github_actions(pipeline, output_dir),
-        CiProvider::Gitlab => generate_gitlab_ci(pipeline, output_dir),
+        CiProvider::Github => generate_github_actions(pipeline, output_dir, force),
+        CiProvider::Gitlab => generate_gitlab_ci(pipeline, output_dir, force),
     }
 }
 
@@ -21,20 +29,22 @@ pub fn generate_cicd(
 fn generate_github_actions(
     pipeline: &Pipeline,
     output_dir: &Path,
+    force: bool,
 ) -> Result<Vec<PathBuf>, GenerationError> {
     let workflow = GithubWorkflow::from_pipeline(pipeline);
     let path = output_dir.join(".github/workflows/devinit.yml");
-    Ok(vec![write_yaml(&workflow, &path)?])
+    Ok(vec![write_yaml_with_options(&workflow, &path, force)?])
 }
 
 /// Generates a GitLab CI configuration file.
 fn generate_gitlab_ci(
     pipeline: &Pipeline,
     output_dir: &Path,
+    force: bool,
 ) -> Result<Vec<PathBuf>, GenerationError> {
     let workflow = GitlabPipeline::from_pipeline(pipeline);
     let path = output_dir.join(".gitlab-ci.yml");
-    Ok(vec![write_yaml(&workflow, &path)?])
+    Ok(vec![write_yaml_with_options(&workflow, &path, force)?])
 }
 
 #[derive(Serialize)]

@@ -1,4 +1,4 @@
-use clap::{Arg, Command};
+use clap::{Arg, ArgAction, Command};
 
 /// Builds the top-level CLI command and its subcommands.
 pub fn build_cli() -> Command {
@@ -93,7 +93,14 @@ fn build_login_cli() -> Command {
 
 /// Builds the compile command.
 fn build_compile_cli() -> Command {
-    Command::new("compile").about("validate and generate compile.yaml")
+    Command::new("compile")
+        .about("validate and generate compile.yaml")
+        .arg(
+            Arg::new("force")
+                .long("force")
+                .help("Overwrite existing generated files")
+                .action(ArgAction::SetTrue),
+        )
 }
 
 /// Builds the test command.

@@ -18,12 +18,20 @@ pub fn compile() -> Result<Vec<PathBuf>, DevinitError> {
 
 /// Loads, validates, and generates a compile specification.
 pub fn compile_at(input_path: &Path, output_dir: &Path) -> Result<Vec<PathBuf>, DevinitError> {
+    compile_at_with_options(input_path, output_dir, false)
+}
+
+pub fn compile_at_with_options(
+    input_path: &Path,
+    output_dir: &Path,
+    force: bool,
+) -> Result<Vec<PathBuf>, DevinitError> {
     let spec = load_compile(input_path)?;
     // Stop generation when configuration validation fails.
     if let Err(errors) = validator::compile_validator::validate_compile(&spec) {
         return Err(DevinitError::ValidationErrors(errors));
     }
-    Ok(generator::generate(&spec, output_dir)?)
+    Ok(generator::generate_with_options(&spec, output_dir, force)?)
 }
 
 /// Prints validation errors in a readable command-line format.
@@ -111,7 +119,11 @@ pub fn cli_logic() -> Result<(), DevinitError> {
             println!("logging in: {}, {:?}", configs_url, config_name);
         }
 
-        Some(("compile", _)) => match compile() {
+        Some(("compile", sub_matches)) => match compile_at_with_options(
+            Path::new("compile.yaml"),
+            Path::new("."),
+            sub_matches.get_flag("force"),
+        ) {
             Ok(paths) => {
                 println!("✓ compile.yaml loaded");
                 println!("✓ configuration validated");

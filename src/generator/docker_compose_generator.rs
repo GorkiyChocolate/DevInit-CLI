@@ -1,5 +1,5 @@
 use crate::errors::GenerationError;
-use crate::file_config::yaml_writer::write_yaml;
+use crate::file_config::yaml_writer::write_yaml_with_options;
 use crate::models::compile_struct::CompileService;
 use crate::models::docker_compose_struct::RecipeCompose;
 use serde::Serialize;
@@ -11,6 +11,14 @@ pub fn generate_docker_compose(
     services: &[CompileService],
     output_dir: &Path,
 ) -> Result<Vec<PathBuf>, GenerationError> {
+    generate_docker_compose_with_options(services, output_dir, false)
+}
+
+pub fn generate_docker_compose_with_options(
+    services: &[CompileService],
+    output_dir: &Path,
+    force: bool,
+) -> Result<Vec<PathBuf>, GenerationError> {
     let mut compose_services = BTreeMap::new();
     // Convert every input service into a named Compose service.
     for service in services {
@@ -21,7 +29,7 @@ pub fn generate_docker_compose(
     let compose = DockerComposeFile {
         services: compose_services,
     };
-    let path = write_yaml(&compose, &output_dir.join("docker-compose.yaml"))?;
+    let path = write_yaml_with_options(&compose, &output_dir.join("docker-compose.yaml"), force)?;
     Ok(vec![path])
 }
 

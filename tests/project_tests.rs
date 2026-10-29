@@ -1,10 +1,12 @@
 use devinit_cli_2::cli::cli_logic::compile_at;
+use devinit_cli_2::cli::cli_logic::compile_at_with_options;
 use devinit_cli_2::errors::DevinitError;
 use devinit_cli_2::file_config::file_validator::ensure_file_not_empty;
 use devinit_cli_2::generator::cicd_generator::generate_cicd;
 use devinit_cli_2::generator::docker_compose_generator::generate_docker_compose;
 use devinit_cli_2::generator::generate;
 use devinit_cli_2::generator::k8s_generator::generate_k8s;
+use devinit_cli_2::generator::k8s_generator::generate_k8s_with_options;
 use devinit_cli_2::models::cicd_struct::{CiProvider, Job, Pipeline, Runner, Step, StepAction};
 use devinit_cli_2::models::compile_struct::{CompileService, CompileSpec};
 use devinit_cli_2::models::docker_compose_struct::RecipeCompose;
@@ -155,15 +157,37 @@ fn missing_compile_file_returns_an_error() {
 }
 
 #[test]
-fn repeated_compile_replaces_the_same_generated_file() {
+fn repeated_compile_requires_force_to_overwrite() {
     let (input, output) = temp_paths("repeat");
+
+    let _ = fs::remove_dir_all(input.parent().unwrap());
     fs::create_dir_all(input.parent().unwrap()).unwrap();
     fs::write(&input, valid_yaml()).unwrap();
 
+    // First compile should succeed.
     let first = compile_at(&input, &output).expect("first compile should succeed");
-    let second = compile_at(&input, &output).expect("second compile should succeed");
+
+    let generated_file = output.join("k8s/backend-deployment.yaml");
+    let original = fs::read(&generated_file).unwrap();
+
+    // Second compile must refuse to overwrite.
+    let result = compile_at(&input, &output);
+
+    assert!(
+        result.is_err(),
+        "compile without --force must reject existing files"
+    );
+
+    // Original content must remain unchanged.
+    assert_eq!(fs::read(&generated_file).unwrap(), original);
+
+    // Explicit force allows replacement.
+    let second = compile_at_with_options(&input, &output, true)
+        .expect("compile with --force should succeed");
+
     assert_eq!(first, second);
     assert_eq!(fs::read_dir(output.join("k8s")).unwrap().count(), 1);
+
     let _ = fs::remove_dir_all(input.parent().unwrap());
 }
 
@@ -277,12 +301,34 @@ fn generates_selected_services_with_descriptions() {
 #[test]
 fn generates_kubernetes_yaml_and_expected_path() {
     let output = std::env::temp_dir().join(format!("devinit-k8s-test-{}", std::process::id()));
-    let paths = generate_k8s(&deployment(), &output).expect("generation should succeed");
+
+    let _ = fs::remove_dir_all(&output);
+
+    let paths = generate_k8s(&deployment(), &output).expect("first generation should succeed");
+
     assert_eq!(paths, vec![output.join("k8s/backend-deployment.yaml")]);
-    let contents = fs::read_to_string(&paths[0]).expect("generated file should exist");
-    assert!(contents.contains("apiVersion: apps/v1"));
-    assert!(contents.contains("kind: Deployment"));
-    generate_k8s(&deployment(), &output).expect("existing generated file should be replaceable");
+
+    let original = fs::read_to_string(&paths[0]).unwrap();
+
+    assert!(original.contains("apiVersion: apps/v1"));
+    assert!(original.contains("kind: Deployment"));
+
+    // Existing file must be protected.
+    let result = generate_k8s(&deployment(), &output);
+
+    assert!(
+        result.is_err(),
+        "generation without force must not overwrite existing YAML"
+    );
+
+    assert_eq!(fs::read_to_string(&paths[0]).unwrap(), original);
+
+    // Force explicitly permits replacement.
+    let replaced = generate_k8s_with_options(&deployment(), &output, true)
+        .expect("generation with force should succeed");
+
+    assert_eq!(paths, replaced);
+
     let _ = fs::remove_dir_all(output);
 }
 
