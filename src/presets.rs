@@ -127,13 +127,13 @@ fn expand_compose_presets_from(
     }
 
     let presets = read_presets_from(preset_path)?.ok_or_else(|| {
-        config_error("compile.yaml references presets, but devinit.yaml was not found")
+        config_error("compile.yaml references presets, but global devinit.yaml was not found")
     })?;
 
     let compose_presets = presets
         .get("docker_compose")
         .and_then(Value::as_mapping)
-        .ok_or_else(|| config_error("devinit.yaml must define docker_compose presets"))?;
+        .ok_or_else(|| config_error("Global devinit.yaml must define docker_compose presets"))?;
 
     let mut expanded = Vec::new();
 
@@ -148,51 +148,111 @@ fn expand_compose_presets_from(
             continue;
         };
 
-        if mapping.len() != 1 {
-            return Err(config_error(format!(
-                "services[{index}]: preset reference must contain only 'use'",
-            )));
+        for field in mapping.keys() {
+            let Some(field) = field.as_str() else {
+                return Err(config_error(format!(
+                    "services[{index}]: preset reference fields must be strings"
+                )));
+            };
+
+            if field != "use" && field != "overrides" {
+                return Err(config_error(format!(
+                    "services[{index}]: unsupported preset field '{field}'"
+                )));
+            }
         }
 
         let name = preset_name
             .as_str()
-            .ok_or_else(|| config_error(format!("services[{index}].use must be a string",)))?;
+            .ok_or_else(|| config_error(format!("services[{index}].use must be a string")))?;
 
         let preset = compose_presets
             .get(key(name))
-            .ok_or_else(|| config_error(format!("Unknown docker_compose preset: '{name}'",)))?;
+            .ok_or_else(|| config_error(format!("Unknown docker_compose preset: '{name}'")))?;
 
         let preset_services = preset.as_sequence().ok_or_else(|| {
-            config_error(format!("Preset '{name}' must contain a list of services",))
+            config_error(format!("Preset '{name}' must contain a list of services"))
         })?;
 
         if preset_services.is_empty() {
-            return Err(config_error(format!("Preset '{name}' cannot be empty",)));
+            return Err(config_error(format!("Preset '{name}' cannot be empty")));
+        }
+
+        let overrides = match mapping.get(key("overrides")) {
+            Some(value) => Some(value.as_mapping().ok_or_else(|| {
+                config_error(format!("services[{index}].overrides must be a mapping"))
+            })?),
+            None => None,
+        };
+
+        // Check that every override targets a service in this preset.
+        if let Some(overrides) = overrides {
+            for (override_name, override_value) in overrides {
+                let service_name = override_name.as_str().ok_or_else(|| {
+                    config_error("Compose override service names must be strings")
+                })?;
+
+                if !override_value.is_mapping() {
+                    return Err(config_error(format!(
+                        "Overrides for '{name}.{service_name}' must be a mapping"
+                    )));
+                }
+
+                let exists = preset_services
+                    .iter()
+                    .any(|item| item.get("name").and_then(Value::as_str) == Some(service_name));
+
+                if !exists {
+                    return Err(config_error(format!(
+                        "Unknown service '{service_name}' in overrides for preset '{name}'"
+                    )));
+                }
+
+                // The alias selects the service; changing its identity
+                // would make dependency references ambiguous.
+                if override_value.get("name").is_some() || override_value.get("use").is_some() {
+                    return Err(config_error(format!(
+                        "Cannot override 'name' or 'use' in preset '{name}.{service_name}'"
+                    )));
+                }
+            }
         }
 
         for (preset_index, item) in preset_services.iter().enumerate() {
             let Some(item_mapping) = item.as_mapping() else {
                 return Err(config_error(format!(
-                    "Preset '{name}' item {preset_index} must be a service mapping",
+                    "Preset '{name}' item {preset_index} must be a service mapping"
                 )));
             };
 
             if item_mapping.contains_key(key("use")) {
                 return Err(config_error(format!(
-                    "Nested preset references are not supported: '{name}'",
+                    "Nested preset references are not supported: '{name}'"
                 )));
             }
 
-            if !item_mapping.contains_key(key("name")) {
-                return Err(config_error(format!(
-                    "Preset '{name}' item {preset_index} requires 'name'",
-                )));
+            let service_name = item_mapping
+                .get(key("name"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    config_error(format!(
+                        "Preset '{name}' item {preset_index} requires a string 'name'"
+                    ))
+                })?;
+
+            let mut resolved = item.clone();
+
+            if let Some(overrides) = overrides
+                && let Some(override_value) = overrides.get(key(service_name))
+            {
+                merge_yaml(&mut resolved, override_value);
             }
 
-            expanded.push(item.clone());
+            expanded.push(resolved);
         }
     }
 
+    // Replace the source list only after all presets resolve.
     *services = expanded;
 
     Ok(())
@@ -219,6 +279,56 @@ pub fn load_preset_document(project_root: &Path) -> Result<Option<Mapping>, Devi
                 .ok_or_else(|| config_error("Invalid devinit.yaml structure"))
         })
         .transpose()
+}
+
+fn resolve_cicd_preset(reference: &Mapping, configured: &Mapping) -> Result<Value, DevinitError> {
+    for field in reference.keys() {
+        let Some(field) = field.as_str() else {
+            return Err(config_error(
+                "CI/CD preset reference fields must be strings",
+            ));
+        };
+
+        if field != "use" && field != "overrides" {
+            return Err(config_error(format!(
+                "Unsupported CI/CD preset reference field: '{field}'"
+            )));
+        }
+    }
+
+    let name = reference
+        .get(key("use"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| config_error("cicd.use must be a string"))?;
+
+    let mut pipeline = configured
+        .get(key(name))
+        .ok_or_else(|| config_error(format!("Unknown CI/CD preset: '{name}'")))?
+        .clone();
+
+    if !pipeline.is_mapping() {
+        return Err(config_error(format!(
+            "CI/CD preset '{name}' must be a mapping"
+        )));
+    }
+
+    if pipeline.get("use").is_some() {
+        return Err(config_error("Nested CI/CD presets are not supported"));
+    }
+
+    if let Some(overrides) = reference.get(key("overrides")) {
+        if !overrides.is_mapping() {
+            return Err(config_error("cicd.overrides must be a mapping"));
+        }
+
+        if overrides.get("use").is_some() {
+            return Err(config_error("CI/CD overrides cannot contain 'use'"));
+        }
+
+        merge_yaml(&mut pipeline, overrides);
+    }
+
+    Ok(pipeline)
 }
 
 /// Expands global Kubernetes and CI/CD presets.
@@ -285,70 +395,98 @@ pub fn expand_infrastructure_presets(
             .and_then(Value::as_mapping)
             .ok_or_else(|| config_error("cicd must be a mapping"))?;
 
-        if reference.len() != 1 {
-            return Err(config_error(
-                "cicd preset reference must contain only 'use'",
-            ));
-        }
+        let resolved = resolve_cicd_preset(reference, configured)?;
 
-        let name = reference
-            .get(&use_key)
-            .and_then(Value::as_str)
-            .ok_or_else(|| config_error("cicd.use must be a string"))?;
-
-        let pipeline = configured
-            .get(key(name))
-            .ok_or_else(|| config_error(format!("Unknown CI/CD preset: '{name}'")))?
-            .clone();
-
-        if !pipeline.is_mapping() {
-            return Err(config_error(format!(
-                "CI/CD preset '{name}' must be a mapping"
-            )));
-        }
-
-        if pipeline.get("use").is_some() {
-            return Err(config_error("Nested CI/CD presets are not supported"));
-        }
-
-        root.insert(cicd_key, pipeline);
+        root.insert(cicd_key, resolved);
     }
 
     Ok(())
 }
 
-fn expand_k8s_section(section: &mut Mapping, configured: &Mapping) -> Result<(), DevinitError> {
-    let reference = section
-        .remove(key("use"))
-        .ok_or_else(|| config_error("k8s.use is missing"))?;
-
-    let names: Vec<String> = match reference {
-        Value::String(name) => vec![name],
-
-        Value::Sequence(values) => {
-            let mut names = Vec::with_capacity(values.len());
-
-            for value in values {
-                let name = value
-                    .as_str()
-                    .ok_or_else(|| config_error("k8s.use entries must be strings"))?;
-
-                names.push(name.to_owned());
+/// Recursively merges YAML mappings.
+///
+/// - Mapping + Mapping: recursively merge keys.
+/// - Other values: override replaces original.
+/// - Sequences are replaced, not concatenated.
+///
+/// The original global preset is never modified.
+fn merge_yaml(base: &mut Value, overrides: &Value) {
+    match (base, overrides) {
+        (Value::Mapping(base_map), Value::Mapping(override_map)) => {
+            for (key, value) in override_map {
+                if let Some(existing) = base_map.get_mut(key) {
+                    merge_yaml(existing, value);
+                } else {
+                    base_map.insert(key.clone(), value.clone());
+                }
             }
-
-            names
         }
 
+        (base, overrides) => {
+            *base = overrides.clone();
+        }
+    }
+}
+
+fn expand_k8s_section(section: &mut Mapping, configured: &Mapping) -> Result<(), DevinitError> {
+    let use_key = key("use");
+
+    // Work on a clone so errors don't partially modify the document.
+    let mut result = section.clone();
+
+    let reference = result
+        .remove(&use_key)
+        .ok_or_else(|| config_error("k8s.use is missing"))?;
+
+    let entries = match reference {
+        Value::Sequence(entries) => entries,
+        Value::String(name) => vec![Value::String(name)],
         _ => {
-            return Err(config_error("k8s.use must be a string or list of strings"));
+            return Err(config_error("k8s.use must be a string or sequence"));
         }
     };
 
-    if names.is_empty() {
+    if entries.is_empty() {
         return Err(config_error("k8s.use cannot be empty"));
     }
 
-    for name in names {
+    for entry in entries {
+        let (name, overrides) = match entry {
+            Value::String(name) => (name, None),
+
+            Value::Mapping(mapping) => {
+                for field in mapping.keys() {
+                    let Some(field) = field.as_str() else {
+                        return Err(config_error(
+                            "Kubernetes preset reference contains a non-string field",
+                        ));
+                    };
+
+                    if field != "name" && field != "overrides" {
+                        return Err(config_error(format!(
+                            "Unsupported Kubernetes preset reference field: '{field}'"
+                        )));
+                    }
+                }
+
+                let name = mapping
+                    .get(key("name"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        config_error("Kubernetes preset reference requires a string 'name'")
+                    })?
+                    .to_owned();
+
+                let overrides = mapping.get(key("overrides")).cloned();
+
+                (name, overrides)
+            }
+
+            _ => {
+                return Err(config_error("k8s.use entries must be strings or mappings"));
+            }
+        };
+
         if !valid_preset_name(&name) {
             return Err(config_error(format!(
                 "Invalid Kubernetes preset name: '{name}'"
@@ -366,43 +504,86 @@ fn expand_k8s_section(section: &mut Mapping, configured: &Mapping) -> Result<(),
             return Err(config_error(format!("Kubernetes preset '{name}' is empty")));
         }
 
-        for (file_key, resource) in group {
-            let file_key = file_key.as_str().ok_or_else(|| {
+        let override_map = match overrides.as_ref() {
+            Some(value) => Some(value.as_mapping().ok_or_else(|| {
                 config_error(format!(
-                    "Kubernetes preset '{name}' has a non-string manifest name"
+                    "Overrides for Kubernetes preset '{name}' must be a mapping"
+                ))
+            })?),
+            None => None,
+        };
+
+        // Every override must target an existing manifest in the group.
+        if let Some(overrides) = override_map {
+            for manifest_name in overrides.keys() {
+                let manifest_name = manifest_name.as_str().ok_or_else(|| {
+                    config_error("Kubernetes override manifest names must be strings")
+                })?;
+
+                if !group.contains_key(key(manifest_name)) {
+                    return Err(config_error(format!(
+                        "Unknown manifest '{manifest_name}' in overrides for preset '{name}'"
+                    )));
+                }
+
+                let override_value = overrides
+                    .get(key(manifest_name))
+                    .expect("validated override key");
+
+                if !override_value.is_mapping() {
+                    return Err(config_error(format!(
+                        "Overrides for '{name}.{manifest_name}' must be a mapping"
+                    )));
+                }
+            }
+        }
+
+        for (file_key, resource) in group {
+            let file_name = file_key.as_str().ok_or_else(|| {
+                config_error(format!(
+                    "Kubernetes preset '{name}' contains a non-string manifest name"
                 ))
             })?;
 
-            if !valid_preset_name(file_key) {
+            if !valid_preset_name(file_name) {
                 return Err(config_error(format!(
-                    "Invalid manifest name '{file_key}' in preset '{name}'"
+                    "Invalid manifest name '{file_name}' in preset '{name}'"
                 )));
             }
 
             if !resource.is_mapping() {
                 return Err(config_error(format!(
-                    "Kubernetes preset '{name}.{file_key}' must be a mapping"
+                    "Kubernetes preset '{name}.{file_name}' must be a mapping"
                 )));
             }
 
-            if resource.get("use").is_some() {
+            let mut resolved = resource.clone();
+
+            if let Some(overrides) = override_map
+                && let Some(override_value) = overrides.get(key(file_name))
+            {
+                merge_yaml(&mut resolved, override_value);
+            }
+
+            // Nested references remain unsupported.
+            if resolved.get("use").is_some() {
                 return Err(config_error("Nested Kubernetes presets are not supported"));
             }
 
-            // Prefix file names to avoid collisions between groups.
-            let output_name = format!("{name}-{file_key}");
-
+            let output_name = format!("{name}-{file_name}");
             let output_key = key(&output_name);
 
-            if section.contains_key(&output_key) {
+            if result.contains_key(&output_key) {
                 return Err(config_error(format!(
                     "Duplicate Kubernetes manifest: '{output_name}'"
                 )));
             }
 
-            section.insert(output_key, resource.clone());
+            result.insert(output_key, resolved);
         }
     }
+
+    *section = result;
 
     Ok(())
 }
@@ -421,6 +602,195 @@ fn valid_preset_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn compose_preset_overrides_ports() {
+        let dir = test_dir();
+
+        fs::write(
+            dir.join("devinit.yaml"),
+            r#"
+docker_compose:
+  db:
+    - name: postgresql
+      version: "17"
+      ports:
+        - "5433:5432"
+    - name: redis
+      version: "7"
+      ports:
+        - "6379:6379"
+"#,
+        )
+        .unwrap();
+
+        let mut document: Value = serde_yaml::from_str(
+            r#"
+services:
+  - use: db
+    overrides:
+      postgresql:
+        ports:
+          - "5434:5432"
+      redis:
+        ports:
+          - "6381:6379"
+"#,
+        )
+        .unwrap();
+
+        expand_compose_presets_from(&mut document, &dir.join("devinit.yaml")).unwrap();
+
+        assert_eq!(
+            document["services"][0]["ports"][0].as_str(),
+            Some("5434:5432")
+        );
+
+        assert_eq!(
+            document["services"][1]["ports"][0].as_str(),
+            Some("6381:6379")
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn compose_preset_preserves_unmodified_fields() {
+        let dir = test_dir();
+
+        fs::write(
+            dir.join("devinit.yaml"),
+            r#"
+docker_compose:
+  db:
+    - name: postgresql
+      version: "17"
+      restart: always
+      ports:
+        - "5433:5432"
+"#,
+        )
+        .unwrap();
+
+        let mut document: Value = serde_yaml::from_str(
+            r#"
+services:
+  - use: db
+    overrides:
+      postgresql:
+        ports:
+          - "5434:5432"
+"#,
+        )
+        .unwrap();
+
+        expand_compose_presets_from(&mut document, &dir.join("devinit.yaml")).unwrap();
+
+        assert_eq!(document["services"][0]["version"].as_str(), Some("17"));
+
+        assert_eq!(document["services"][0]["restart"].as_str(), Some("always"));
+
+        assert_eq!(
+            document["services"][0]["ports"][0].as_str(),
+            Some("5434:5432")
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn compose_preset_rejects_unknown_override_service() {
+        let dir = test_dir();
+
+        fs::write(
+            dir.join("devinit.yaml"),
+            r#"
+docker_compose:
+  db:
+    - name: redis
+      version: "7"
+"#,
+        )
+        .unwrap();
+
+        let mut document: Value = serde_yaml::from_str(
+            r#"
+services:
+  - use: db
+    overrides:
+      mongodb:
+        ports:
+          - "27017:27017"
+"#,
+        )
+        .unwrap();
+
+        assert!(expand_compose_presets_from(&mut document, &dir.join("devinit.yaml"),).is_err());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn compose_preset_rejects_invalid_overrides() {
+        let dir = test_dir();
+
+        fs::write(
+            dir.join("devinit.yaml"),
+            r#"
+docker_compose:
+  db:
+    - name: redis
+      version: "7"
+"#,
+        )
+        .unwrap();
+
+        let mut document: Value = serde_yaml::from_str(
+            r#"
+services:
+  - use: db
+    overrides:
+      redis: invalid
+"#,
+        )
+        .unwrap();
+
+        assert!(expand_compose_presets_from(&mut document, &dir.join("devinit.yaml"),).is_err());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn compose_preset_rejects_service_renaming() {
+        let dir = test_dir();
+
+        fs::write(
+            dir.join("devinit.yaml"),
+            r#"
+docker_compose:
+  db:
+    - name: redis
+      version: "7"
+"#,
+        )
+        .unwrap();
+
+        let mut document: Value = serde_yaml::from_str(
+            r#"
+services:
+  - use: db
+    overrides:
+      redis:
+        name: another-redis
+"#,
+        )
+        .unwrap();
+
+        assert!(expand_compose_presets_from(&mut document, &dir.join("devinit.yaml"),).is_err());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -604,5 +974,214 @@ backend-deployment:
         .unwrap();
 
         assert!(expand_k8s_section(&mut section, &configured).is_err());
+    }
+
+    #[test]
+    fn overrides_kubernetes_deployment_template() {
+        let configured: Mapping = serde_yaml::from_str(
+            r#"
+backend:
+  deployment:
+    template: deployment
+    name: backend
+    image: backend:latest
+    replicas: 2
+    port: 8080
+"#,
+        )
+        .unwrap();
+
+        let mut section: Mapping = serde_yaml::from_str(
+            r#"
+use:
+  - name: backend
+    overrides:
+      deployment:
+        image: backend:v2
+        replicas: 5
+"#,
+        )
+        .unwrap();
+
+        expand_k8s_section(&mut section, &configured).unwrap();
+
+        let deployment = section.get(key("backend-deployment")).unwrap();
+
+        assert_eq!(deployment["image"].as_str(), Some("backend:v2"));
+
+        assert_eq!(deployment["replicas"].as_u64(), Some(5));
+
+        assert_eq!(deployment["port"].as_u64(), Some(8080));
+    }
+
+    #[test]
+    fn deep_merges_raw_kubernetes_manifest() {
+        let configured: Mapping = serde_yaml::from_str(
+            r#"
+backend:
+  deployment:
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: backend
+      labels:
+        app: backend
+    spec:
+      replicas: 2
+"#,
+        )
+        .unwrap();
+
+        let mut section: Mapping = serde_yaml::from_str(
+            r#"
+use:
+  - name: backend
+    overrides:
+      deployment:
+        metadata:
+          labels:
+            environment: production
+        spec:
+          replicas: 5
+"#,
+        )
+        .unwrap();
+
+        expand_k8s_section(&mut section, &configured).unwrap();
+
+        let deployment = section.get(key("backend-deployment")).unwrap();
+
+        assert_eq!(
+            deployment["metadata"]["labels"]["app"].as_str(),
+            Some("backend")
+        );
+
+        assert_eq!(
+            deployment["metadata"]["labels"]["environment"].as_str(),
+            Some("production")
+        );
+
+        assert_eq!(deployment["spec"]["replicas"].as_u64(), Some(5));
+    }
+
+    #[test]
+    fn rejects_unknown_kubernetes_override_manifest() {
+        let configured: Mapping = serde_yaml::from_str(
+            r#"
+backend:
+  deployment:
+    template: deployment
+    name: backend
+    image: backend:latest
+"#,
+        )
+        .unwrap();
+
+        let mut section: Mapping = serde_yaml::from_str(
+            r#"
+use:
+  - name: backend
+    overrides:
+      unknown:
+        replicas: 5
+"#,
+        )
+        .unwrap();
+
+        assert!(expand_k8s_section(&mut section, &configured).is_err());
+    }
+
+    #[test]
+    fn cicd_preset_overrides_jobs() {
+        let configured: Mapping = serde_yaml::from_str(
+            r#"
+rust-tests:
+  provider: github
+  triggers:
+    - type: push
+      branches:
+        - main
+  jobs:
+    - name: test
+      steps:
+        - name: Run tests
+          action: run
+          command: cargo test
+"#,
+        )
+        .unwrap();
+
+        let reference: Mapping = serde_yaml::from_str(
+            r#"
+use: rust-tests
+overrides:
+  jobs:
+    - name: test
+      steps:
+        - name: Release tests
+          action: run
+          command: cargo test --release
+"#,
+        )
+        .unwrap();
+
+        let resolved = resolve_cicd_preset(&reference, &configured).unwrap();
+
+        assert_eq!(resolved["provider"].as_str(), Some("github"));
+
+        assert_eq!(
+            resolved["jobs"][0]["steps"][0]["command"].as_str(),
+            Some("cargo test --release")
+        );
+
+        assert_eq!(
+            resolved["triggers"][0]["branches"][0].as_str(),
+            Some("main")
+        );
+    }
+
+    #[test]
+    fn cicd_preset_rejects_unknown_name() {
+        let configured = Mapping::new();
+
+        let reference: Mapping = serde_yaml::from_str("use: missing").unwrap();
+
+        assert!(resolve_cicd_preset(&reference, &configured).is_err());
+    }
+
+    #[test]
+    fn cicd_preset_rejects_invalid_overrides() {
+        let configured: Mapping = serde_yaml::from_str(
+            r#"
+rust-tests:
+  provider: github
+"#,
+        )
+        .unwrap();
+
+        let reference: Mapping = serde_yaml::from_str(
+            r#"
+use: rust-tests
+overrides: invalid
+"#,
+        )
+        .unwrap();
+
+        assert!(resolve_cicd_preset(&reference, &configured).is_err());
+    }
+
+    #[test]
+    fn cicd_preset_rejects_nested_reference() {
+        let configured: Mapping = serde_yaml::from_str(
+            r#"
+rust-tests:
+  use: another-preset
+"#,
+        )
+        .unwrap();
+
+        let reference: Mapping = serde_yaml::from_str("use: rust-tests").unwrap();
+
+        assert!(resolve_cicd_preset(&reference, &configured).is_err());
     }
 }
