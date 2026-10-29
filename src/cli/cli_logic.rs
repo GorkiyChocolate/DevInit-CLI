@@ -25,18 +25,27 @@ pub fn compile_at_with_options(
     output_dir: &Path,
     force: bool,
 ) -> Result<Vec<PathBuf>, DevinitError> {
-    // 1. Parse YAML and resolve registry recipes.
+    // Parse and resolve the existing compile specification.
     let spec = load_compile_with_registry(input_path)?;
 
-    // 2. Build validated intermediate representation.
+    // Load arbitrary user-defined Kubernetes manifests.
+    let manifests = crate::k8s_manifests::load_manifests(input_path)?;
+
+    // Build and validate the intermediate representation.
     let ir = crate::ir::ResolvedCompileSpec::build(spec).map_err(DevinitError::ValidationErrors)?;
 
-    // 3. Generate infrastructure from validated configuration.
-    Ok(generator::generate_with_options(
-        ir.spec(),
-        output_dir,
-        force,
-    )?)
+    // Check all custom manifest paths before generating files.
+    crate::k8s_manifests::preflight(&manifests, output_dir, force, ir.spec().kubernetes.as_ref())?;
+
+    // Generate existing Compose, Kubernetes and CI/CD outputs.
+    let mut generated = generator::generate_with_options(ir.spec(), output_dir, force)?;
+
+    // Generate arbitrary Kubernetes manifests.
+    generated.extend(crate::k8s_manifests::write_manifests(
+        &manifests, output_dir, force,
+    )?);
+
+    Ok(generated)
 }
 
 /// Prints validation errors in a readable command-line format.

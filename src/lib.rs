@@ -43,5 +43,6 @@ pub mod docker {
 
 pub mod errors;
 pub mod ir;
+pub mod k8s_manifests;
 pub mod resolver;
 pub mod service_registry;

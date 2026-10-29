@@ -9,3 +9,4 @@ env.example
 .github/
 .devinit
 cli/.devinit
+/k8s
