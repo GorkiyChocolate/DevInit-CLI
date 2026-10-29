@@ -1,7 +1,11 @@
 [package]
 name = "devinit_cli_2"
-version = "0.1.0"
+version = "0.0.2"
 edition = "2024"
+
+[[bin]]
+name = "devinit"
+path = "src/main.rs"
 
 [dependencies]
 clap = "4.6.6"

@@ -1,9 +1,81 @@
-/target
-json.json
-/.vscode
-NeedToLearn.md
-compose.yaml
-compose.yaml.example
-env.example
-/resources
-.github/
+# ==========================================
+# DevInit CLI - Rust
+# ==========================================
+
+/target/
+**/*.rs.bk
+*.pdb
+
+# ==========================================
+# Environment / Secrets
+# ==========================================
+
+.env
+.env.*
+!.env.example
+!.env.sample
+
+*.pem
+*.key
+*.p12
+
+# ==========================================
+# IDE / Editors
+# ==========================================
+
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+*.swp
+*.swo
+*~
+.history/
+
+# ==========================================
+# OS
+# ==========================================
+
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ==========================================
+# Temporary files
+# ==========================================
+
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+
+/tmp/
+/test-output/
+/test-results/
+/coverage/
+
+# ==========================================
+# Local DevInit state
+# ==========================================
+
+/.devinit/
+
+# ==========================================
+# Generated infrastructure
+# ==========================================
+
+/docker-compose.yaml
+/docker-compose.yml
+/compose.yaml
+/compose.yml
+
+/k8s/
+/.gitlab-ci.yml
+/.github/workflows/devinit.yml
+
+# ==========================================
+# Local configuration
+# ==========================================
+
+/compile.yaml

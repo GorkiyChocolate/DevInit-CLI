@@ -1,0 +1,15 @@
+postgresql:
+  name: postgresql
+  description: PostgreSQL database
+  image: postgres:16
+  ports:
+  - 5432:5432
+  environment: null
+  volumes: null
+  networks: null
+  depends_on: null
+  restart: unless-stopped
+  command: null
+  files: null
+  env: null
+  notes: null

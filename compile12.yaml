@@ -1,8 +1,0 @@
-services:
-  - postgresql
-  - redis
-  - rabbitmq
-
-kubernetes: null
-
-cicd: null
