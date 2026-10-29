@@ -3,7 +3,10 @@ pub mod docker_compose_generator;
 pub mod k8s_generator;
 pub mod k8s_service_generator;
 use crate::errors::GenerationError;
+use crate::generation_plan::GenerationPlan;
+use crate::k8s_manifests::{KubernetesManifest, plan_custom_manifests};
 use crate::models::compile_struct::CompileSpec;
+
 use std::path::{Path, PathBuf};
 
 /// Generates all requested output files for a compile specification.
@@ -85,4 +88,139 @@ pub fn generate_with_options(
     }
 
     Ok(generated)
+}
+
+/// Builds one generation plan for all supported output formats.
+///
+/// All YAML documents are rendered in memory.
+/// No filesystem writes occur during this operation.
+pub fn build_generation_plan(
+    spec: &CompileSpec,
+    custom_manifests: &[KubernetesManifest],
+) -> Result<GenerationPlan, GenerationError> {
+    let mut plan = GenerationPlan::new();
+
+    // Docker Compose
+    if !spec.services.is_empty() {
+        plan.add(docker_compose_generator::plan_docker_compose(
+            &spec.services,
+        )?)?;
+    }
+
+    // Legacy Kubernetes Deployment and optional Service
+    if let Some(deployment) = &spec.kubernetes {
+        for file in k8s_generator::plan_kubernetes(deployment)? {
+            plan.add(file)?;
+        }
+    }
+
+    // User-defined Kubernetes manifests:
+    // both Raw Mode and Template Mode.
+    for file in plan_custom_manifests(custom_manifests)? {
+        plan.add(file)?;
+    }
+
+    // GitHub Actions or GitLab CI
+    if let Some(pipeline) = &spec.cicd {
+        plan.add(cicd_generator::plan_cicd(pipeline)?)?;
+    }
+
+    Ok(plan)
+}
+
+#[cfg(test)]
+mod generation_plan_tests {
+    use super::*;
+
+    fn spec(yaml: &str) -> CompileSpec {
+        serde_yaml::from_str(yaml).unwrap()
+    }
+
+    #[test]
+    fn builds_unified_plan_for_compose_and_kubernetes() {
+        let config = spec(
+            r#"
+services:
+  - name: redis
+    image: redis:7
+"#,
+        );
+
+        let document: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  ENV: production
+"#,
+        )
+        .unwrap();
+
+        let manifests = vec![KubernetesManifest {
+            file_name: "app-config".into(),
+            document,
+        }];
+
+        let plan = build_generation_plan(&config, &manifests).unwrap();
+
+        assert_eq!(plan.len(), 2);
+
+        let paths: Vec<_> = plan
+            .files()
+            .map(|file| file.relative_path.clone())
+            .collect();
+
+        assert!(paths.contains(&PathBuf::from("docker-compose.yaml")));
+
+        assert!(paths.contains(&PathBuf::from("k8s/app-config.yaml")));
+    }
+
+    #[test]
+    fn unified_plan_rejects_duplicate_paths() {
+        let config = spec("services: []");
+
+        let document: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: example
+"#,
+        )
+        .unwrap();
+
+        let manifests = vec![
+            KubernetesManifest {
+                file_name: "example".into(),
+                document: document.clone(),
+            },
+            KubernetesManifest {
+                file_name: "example".into(),
+                document,
+            },
+        ];
+
+        assert!(build_generation_plan(&config, &manifests).is_err());
+    }
+
+    #[test]
+    fn unified_plan_preserves_compose_content() {
+        let config = spec(
+            r#"
+services:
+  - name: redis
+    image: redis:7
+"#,
+        );
+
+        let plan = build_generation_plan(&config, &[]).unwrap();
+
+        let file = plan.files().next().unwrap();
+
+        let yaml: serde_yaml::Value = serde_yaml::from_str(&file.contents).unwrap();
+
+        assert_eq!(yaml["services"]["redis"]["image"].as_str(), Some("redis:7"));
+    }
 }
