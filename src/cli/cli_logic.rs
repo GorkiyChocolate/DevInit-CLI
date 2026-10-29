@@ -8,8 +8,7 @@ use std::{
 use api::add_recipe::add_recipe;
 use api::get_config::get_config;
 use cli::commands;
-use file_config::env_config::env_file_config;
-use file_config::yaml_config::{load_compile_with_registry, yaml_configs_data, yaml_data};
+use file_config::yaml_config::load_compile_with_registry;
 
 /// Loads the default compile file and generates output in the current directory.
 pub fn compile() -> Result<Vec<PathBuf>, DevinitError> {
@@ -127,14 +126,13 @@ pub fn cli_logic() -> Result<(), DevinitError> {
                 crate::service_registry::cache_recipe_version(&cwd, &recipe, requested_version)
                     .map_err(DevinitError::FileIOError)?;
 
-            let compose_path = cwd.join("compose.yaml.example");
-            let env_path = cwd.join("env.example");
-
-            yaml_data(&recipe, &compose_path).map_err(DevinitError::FileIOError)?;
-
-            env_file_config(&recipe, &env_path).map_err(DevinitError::FileIOError)?;
-
             println!("✓ Added service: {}", recipe.name);
+
+            if let Some(version) = requested_version {
+                println!("✓ Version: {version}");
+            }
+
+            println!("✓ Image: {}", recipe.image);
             println!("✓ Cache: {}", cache_path.display());
         }
 
@@ -151,22 +149,75 @@ pub fn cli_logic() -> Result<(), DevinitError> {
         Some(("get", sub_matches)) => {
             let config_name = sub_matches
                 .get_one::<String>("service_url")
-                .expect("Required argument");
-            println!("Getting repository from: {}", configs_url);
+                .expect("Required argument")
+                .trim()
+                .to_ascii_lowercase();
 
-            match get_config(configs_url, config_name) {
-                Ok(configs_list) => {
-                    println!("Succesfully retrieved configs: {:?}", configs_list);
-                    let target_path = env::current_dir()
-                        .unwrap_or_else(|_| PathBuf::from("."))
-                        .join("compose.yaml.example");
+            let cwd = env::current_dir().map_err(DevinitError::FileIOError)?;
 
-                    // Append fetched configurations to the Compose example file.
-                    if let Err(e) = yaml_configs_data(&configs_list, &target_path) {
-                        eprintln!("Error updating {}: {}", target_path.display(), e);
+            // Validate the requested identifier before accessing the cache.
+            let valid_name = !config_name.is_empty()
+                && config_name != "."
+                && config_name != ".."
+                && config_name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.');
+
+            if !valid_name {
+                return Err(DevinitError::InvalidInput(format!(
+                    "Invalid configuration name: {config_name}"
+                )));
+            }
+
+            // Check the project-local cache first.
+            if let Some(recipe) = crate::service_registry::cached_recipe(&cwd, &config_name)
+                .map_err(DevinitError::FileIOError)?
+            {
+                println!("✓ Configuration found in local cache");
+                println!("✓ Service: {}", recipe.name);
+                println!("✓ Image: {}", recipe.image);
+            } else {
+                // Resolve the Backend address.
+                let base_url = env::var("DEVINIT_API_URL")
+                    .unwrap_or_else(|_| "http://localhost:5167".to_string());
+
+                let configs_url = format!("{}/configs/", base_url.trim_end_matches('/'));
+
+                println!("Fetching configuration: {config_name}");
+
+                let configs = get_config(&configs_url, &config_name).map_err(|error| {
+                    DevinitError::ConfigurationError(format!(
+                        "Failed to download '{config_name}': {error}"
+                    ))
+                })?;
+
+                // Validate the returned recipes before writing.
+                for recipe in &configs.configs {
+                    if recipe.image.trim().is_empty() {
+                        return Err(DevinitError::ConfigurationError(format!(
+                            "Backend returned an empty image for '{}'",
+                            recipe.name
+                        )));
+                    }
+
+                    if recipe.name.trim().is_empty() {
+                        return Err(DevinitError::ConfigurationError(
+                            "Backend returned a recipe without a name".into(),
+                        ));
                     }
                 }
-                Err(e) => eprintln!("Error fetching config: {}", e),
+
+                // Store downloaded recipes in the local registry.
+                for recipe in &configs.configs {
+                    let cache_path = crate::service_registry::cache_recipe(&cwd, recipe)
+                        .map_err(DevinitError::FileIOError)?;
+
+                    println!("✓ Downloaded: {}", recipe.name);
+                    println!("✓ Image: {}", recipe.image);
+                    println!("✓ Cache: {}", cache_path.display());
+                }
+
+                println!("✓ {} configuration(s) cached", configs.configs.len());
             }
         }
 

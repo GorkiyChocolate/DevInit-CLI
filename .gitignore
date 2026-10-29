@@ -7,3 +7,5 @@ compose.yaml.example
 env.example
 /resources
 .github/
+.devinit
+cli/.devinit
