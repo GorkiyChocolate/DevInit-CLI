@@ -1,4 +1,5 @@
 use crate::errors::{DevinitError, ValidationError};
+use crate::generation_plan::GenerationPlan;
 use crate::{api, cli, file_config, generator};
 use std::{
     env,
@@ -9,6 +10,7 @@ use api::add_recipe::add_recipe;
 use api::get_config::get_config;
 use cli::commands;
 use file_config::yaml_config::load_compile_with_registry;
+use std::fs;
 
 /// Loads the default compile file and generates output in the current directory.
 pub fn compile() -> Result<Vec<PathBuf>, DevinitError> {
@@ -20,30 +22,116 @@ pub fn compile_at(input_path: &Path, output_dir: &Path) -> Result<Vec<PathBuf>, 
     compile_at_with_options(input_path, output_dir, false)
 }
 
+/// Loads, validates and renders all infrastructure files in memory.
+///
+/// This is the shared pipeline for compile, check and dry-run.
+fn build_plan(input_path: &Path) -> Result<GenerationPlan, DevinitError> {
+    // Resolve services, global presets and CI/CD configuration.
+    let spec = load_compile_with_registry(input_path)?;
+
+    // Resolve custom Kubernetes manifests and their presets.
+    let manifests = crate::k8s_manifests::load_manifests(input_path)?;
+
+    // Validate the specification and dependency graph.
+    let ir = crate::ir::ResolvedCompileSpec::build(spec).map_err(DevinitError::ValidationErrors)?;
+
+    // Render generated files without writing them.
+    generator::build_generation_plan(ir.spec(), &manifests).map_err(DevinitError::from)
+}
+
+/// Validates a project without writing infrastructure files.
+pub fn check_at(input_path: &Path) -> Result<usize, DevinitError> {
+    let plan = build_plan(input_path)?;
+
+    Ok(plan.len())
+}
+
+/// Preview status of each generated file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlannedAction {
+    Create,
+    Conflict,
+    Overwrite,
+}
+
+impl PlannedAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Create => "CREATE",
+            Self::Conflict => "CONFLICT",
+            Self::Overwrite => "OVERWRITE",
+        }
+    }
+}
+
+/// A single file in a dry-run report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedFile {
+    pub path: PathBuf,
+    pub action: PlannedAction,
+}
+
+/// Builds a preview without modifying the filesystem.
+pub fn dry_run_at(
+    input_path: &Path,
+    output_dir: &Path,
+    force: bool,
+) -> Result<Vec<PlannedFile>, DevinitError> {
+    let plan = build_plan(input_path)?;
+
+    // Validate output paths, including symlink protection.
+    // force=true here only permits inspection of existing regular
+    // files. No writes occur.
+    plan.preflight(output_dir, true)?;
+
+    let mut files = Vec::with_capacity(plan.len());
+
+    for file in plan.files() {
+        let destination = output_dir.join(&file.relative_path);
+
+        let action = match fs::symlink_metadata(&destination) {
+            Ok(metadata) if metadata.is_file() => {
+                if force {
+                    PlannedAction::Overwrite
+                } else {
+                    PlannedAction::Conflict
+                }
+            }
+
+            Ok(_) => {
+                return Err(DevinitError::ConfigurationError(format!(
+                    "Unsupported output destination: {}",
+                    destination.display()
+                )));
+            }
+
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => PlannedAction::Create,
+
+            Err(error) => return Err(DevinitError::FileIOError(error)),
+        };
+
+        files.push(PlannedFile {
+            path: file.relative_path.clone(),
+            action,
+        });
+    }
+
+    Ok(files)
+}
+
+/// Loads, validates and generates infrastructure configurations.
 pub fn compile_at_with_options(
     input_path: &Path,
     output_dir: &Path,
     force: bool,
 ) -> Result<Vec<PathBuf>, DevinitError> {
-    // 1. Load YAML and resolve service recipes.
-    let spec = load_compile_with_registry(input_path)?;
+    let plan = build_plan(input_path)?;
 
-    // 2. Load and expand user-defined Kubernetes manifests.
-    let manifests = crate::k8s_manifests::load_manifests(input_path)?;
-
-    // 3. Build the validated intermediate representation.
-    let ir = crate::ir::ResolvedCompileSpec::build(spec).map_err(DevinitError::ValidationErrors)?;
-
-    // 4. Render every output file in memory.
-    let plan = generator::build_generation_plan(ir.spec(), &manifests)?;
-
-    // 5. Check all output conflicts before writing.
+    // Preserve existing overwrite protection.
     plan.preflight(output_dir, force)?;
 
-    // 6. Write files through the centralized writer.
-    let generated = plan.write(output_dir, force)?;
-
-    Ok(generated)
+    // FileWriter still performs its own preflight.
+    plan.write(output_dir, force).map_err(DevinitError::from)
 }
 
 /// Prints validation errors in a readable command-line format.
@@ -239,30 +327,84 @@ pub fn cli_logic() -> Result<(), DevinitError> {
             println!("logging in: {}, {:?}", configs_url, config_name);
         }
 
-        Some(("compile", sub_matches)) => match compile_at_with_options(
-            Path::new("compile.yaml"),
-            Path::new("."),
-            sub_matches.get_flag("force"),
-        ) {
-            Ok(paths) => {
-                println!("✓ compile.yaml loaded");
-                println!("✓ configuration validated");
-                println!("\nGenerated:");
-                // Print every generated path.
-                for path in &paths {
-                    println!("  {}", path.display());
+        Some(("compile", sub_matches)) => {
+            let input = Path::new("compile.yaml");
+            let output = Path::new(".");
+
+            let force = sub_matches.get_flag("force");
+            let dry_run = sub_matches.get_flag("dry_run");
+
+            if dry_run {
+                let files = dry_run_at(input, output, force)?;
+
+                println!("DevInit Dry Run");
+                println!("\n✓ Configuration validated");
+                println!("✓ Generation plan created");
+                println!("\nPlanned files:");
+
+                let mut creates = 0usize;
+                let mut conflicts = 0usize;
+                let mut overwrites = 0usize;
+
+                for file in &files {
+                    println!("  {:<10} {}", file.action.as_str(), file.path.display());
+
+                    match file.action {
+                        PlannedAction::Create => creates += 1,
+                        PlannedAction::Conflict => conflicts += 1,
+                        PlannedAction::Overwrite => overwrites += 1,
+                    }
                 }
-                println!("\n✓ {} files generated", paths.len());
+
+                println!("\nSummary:");
+                println!("  {} files to create", creates);
+                println!("  {} existing files to overwrite", overwrites);
+                println!("  {} conflicts", conflicts);
+                println!("  0 files written");
+
+                if conflicts > 0 {
+                    println!("\nUse --force to allow overwriting existing files.");
+                }
+            } else {
+                match compile_at_with_options(input, output, force) {
+                    Ok(paths) => {
+                        println!("✓ compile.yaml loaded");
+                        println!("✓ configuration validated");
+                        println!("\nGenerated:");
+
+                        for path in &paths {
+                            println!("  {}", path.display());
+                        }
+
+                        println!("\n✓ {} files generated", paths.len());
+                    }
+
+                    Err(DevinitError::ValidationErrors(errors)) => {
+                        print_validation_errors(&errors);
+                        return Err(DevinitError::ValidationErrors(errors));
+                    }
+
+                    Err(error) => {
+                        eprintln!("Compile failed: {error}");
+                        return Err(error);
+                    }
+                }
             }
-            Err(DevinitError::ValidationErrors(errors)) => {
-                print_validation_errors(&errors);
-                return Err(DevinitError::ValidationErrors(errors));
-            }
-            Err(error) => {
-                eprintln!("Compile failed: {error}");
-                return Err(error);
-            }
-        },
+        }
+
+        Some(("check", _)) => {
+            let count = check_at(Path::new("compile.yaml"))?;
+
+            println!("DevInit Configuration Check");
+            println!("\n✓ compile.yaml loaded");
+            println!("✓ Configuration validated");
+            println!("✓ Dependencies validated");
+            println!("✓ Generation plan created");
+
+            println!("\nConfiguration is valid.");
+            println!("Planned files: {count}");
+            println!("Files written: 0");
+        }
 
         Some(("test", _)) => {}
         _ => {
