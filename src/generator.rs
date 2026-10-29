@@ -1,7 +1,7 @@
 pub mod cicd_generator;
 pub mod docker_compose_generator;
 pub mod k8s_generator;
-
+pub mod k8s_service_generator;
 use crate::errors::GenerationError;
 use crate::models::compile_struct::CompileSpec;
 use std::path::{Path, PathBuf};
@@ -24,11 +24,14 @@ pub fn generate_with_options(
         }
 
         if let Some(kubernetes) = &spec.kubernetes {
-            targets.push(
-                output_dir
-                    .join("k8s")
-                    .join(format!("{}-deployment.yaml", kubernetes.metadata.name)),
-            );
+            let k8s_dir = output_dir.join("k8s");
+            let name = &kubernetes.metadata.name;
+
+            targets.push(k8s_dir.join(format!("{name}-deployment.yaml")));
+
+            if crate::generator::k8s_service_generator::build_service(kubernetes).is_some() {
+                targets.push(k8s_dir.join(format!("{name}-service.yaml")));
+            }
         }
 
         if let Some(cicd) = &spec.cicd {

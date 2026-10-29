@@ -23,6 +23,7 @@ pub mod models {
     pub mod services_struct;
 }
 
+pub mod generator;
 pub mod validator {
     pub mod cicd_validator;
     pub mod compile_validator;
@@ -41,5 +42,4 @@ pub mod docker {
 }
 
 pub mod errors;
-pub mod generator;
 pub mod service_registry;
