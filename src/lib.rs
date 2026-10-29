@@ -42,9 +42,15 @@ pub mod docker {
 }
 
 pub mod errors;
+#[path = "generation/generation_plan.rs"]
 pub mod generation_plan;
+#[path = "core/ir.rs"]
 pub mod ir;
+#[path = "generation/k8s_manifests.rs"]
 pub mod k8s_manifests;
+#[path = "config/presets.rs"]
 pub mod presets;
+#[path = "core/resolver.rs"]
 pub mod resolver;
+#[path = "core/service_registry.rs"]
 pub mod service_registry;
