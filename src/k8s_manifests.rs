@@ -275,6 +275,175 @@ spec:
 
     Ok(service)
 }
+
+/// Performs structural validation for supported Kubernetes resources.
+///
+/// This is intentionally not a complete Kubernetes schema validator.
+fn validate_supported_manifest(resource: &Value, context: &str) -> Result<(), DevinitError> {
+    let kind = resource.get("kind").and_then(Value::as_str).unwrap_or("");
+
+    match kind {
+        "Deployment" => {
+            let spec = resource
+                .get("spec")
+                .ok_or_else(|| invalid(format!("{context}.spec is required")))?;
+
+            let selector = spec
+                .get("selector")
+                .and_then(|v| v.get("matchLabels"))
+                .and_then(Value::as_mapping)
+                .ok_or_else(|| {
+                    invalid(format!("{context}.spec.selector.matchLabels is required"))
+                })?;
+
+            if selector.is_empty() {
+                return Err(invalid(format!(
+                    "{context}.spec.selector.matchLabels must not be empty"
+                )));
+            }
+
+            let template = spec
+                .get("template")
+                .ok_or_else(|| invalid(format!("{context}.spec.template is required")))?;
+
+            let labels = template
+                .get("metadata")
+                .and_then(|v| v.get("labels"))
+                .and_then(Value::as_mapping)
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "{context}.spec.template.metadata.labels is required"
+                    ))
+                })?;
+
+            for (key, value) in selector {
+                if labels.get(key) != Some(value) {
+                    return Err(invalid(format!(
+                        "{context}: Deployment selector does not match Pod labels"
+                    )));
+                }
+            }
+
+            let containers = template
+                .get("spec")
+                .and_then(|v| v.get("containers"))
+                .and_then(Value::as_sequence)
+                .filter(|items| !items.is_empty())
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "{context}.spec.template.spec.containers \
+                         must be a non-empty list"
+                    ))
+                })?;
+
+            for (index, container) in containers.iter().enumerate() {
+                let path = format!("{context}.spec.template.spec.containers[{index}]");
+
+                for field in ["name", "image"] {
+                    container
+                        .get(field)
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.trim().is_empty())
+                        .ok_or_else(|| {
+                            invalid(format!("{path}.{field} must be a non-empty string"))
+                        })?;
+                }
+
+                if let Some(ports) = container.get("ports") {
+                    let ports = ports
+                        .as_sequence()
+                        .ok_or_else(|| invalid(format!("{path}.ports must be a list")))?;
+
+                    for (port_index, port) in ports.iter().enumerate() {
+                        let number = port
+                            .get("containerPort")
+                            .and_then(Value::as_u64)
+                            .filter(|port| (1..=65535).contains(port))
+                            .ok_or_else(|| {
+                                invalid(format!(
+                                    "{path}.ports[{port_index}].containerPort \
+                                     must be between 1 and 65535"
+                                ))
+                            })?;
+
+                        let _ = number;
+                    }
+                }
+            }
+        }
+
+        "Service" => {
+            let spec = resource
+                .get("spec")
+                .ok_or_else(|| invalid(format!("{context}.spec is required")))?;
+
+            let service_type = spec
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("ClusterIP");
+
+            if !matches!(
+                service_type,
+                "ClusterIP" | "NodePort" | "LoadBalancer" | "ExternalName"
+            ) {
+                return Err(invalid(format!(
+                    "{context}.spec.type: unsupported Service type"
+                )));
+            }
+
+            if service_type == "ExternalName" {
+                spec.get("externalName")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.trim().is_empty())
+                    .ok_or_else(|| invalid(format!("{context}.spec.externalName is required")))?;
+            }
+
+            if let Some(ports) = spec.get("ports") {
+                let ports = ports
+                    .as_sequence()
+                    .ok_or_else(|| invalid(format!("{context}.spec.ports must be a list")))?;
+
+                for (index, port) in ports.iter().enumerate() {
+                    for field in ["port", "nodePort"] {
+                        if let Some(value) = port.get(field) {
+                            let valid = value
+                                .as_u64()
+                                .is_some_and(|number| (1..=65535).contains(&number));
+
+                            if !valid {
+                                return Err(invalid(format!(
+                                    "{context}.spec.ports[{index}].{field} \
+                                     must be between 1 and 65535"
+                                )));
+                            }
+                        }
+                    }
+
+                    if let Some(value) = port.get("targetPort") {
+                        let valid_number = value
+                            .as_u64()
+                            .is_some_and(|number| (1..=65535).contains(&number));
+
+                        let valid_name = value.as_str().is_some_and(|name| !name.trim().is_empty());
+
+                        if !valid_number && !valid_name {
+                            return Err(invalid(format!(
+                                "{context}.spec.ports[{index}].targetPort \
+                                 must be a valid port number or name"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Other Kubernetes resources are preserved as raw YAML.
+        _ => {}
+    }
+
+    Ok(())
+}
+
 /// Loads custom Kubernetes manifests from the `k8s` section.
 pub fn load_manifests(path: &Path) -> Result<Vec<KubernetesManifest>, DevinitError> {
     let contents = fs::read_to_string(path).map_err(DevinitError::FileIOError)?;
@@ -307,6 +476,7 @@ pub fn load_manifests(path: &Path) -> Result<Vec<KubernetesManifest>, DevinitErr
 
         let expanded = expand_template(resource)?;
         let resource = &expanded;
+        validate_supported_manifest(resource, &format!("k8s.{name}"))?;
 
         let mapping = resource.as_mapping().ok_or_else(|| {
             invalid(format!(
@@ -470,18 +640,39 @@ mod tests {
     fn accepts_multiple_manifests() {
         let path = temp_file(
             r#"
-services: []
 k8s:
   backend:
     apiVersion: apps/v1
     kind: Deployment
     metadata:
       name: backend
+    spec:
+      replicas: 2
+      selector:
+        matchLabels:
+          app: backend
+      template:
+        metadata:
+          labels:
+            app: backend
+        spec:
+          containers:
+            - name: backend
+              image: backend:latest
+              ports:
+                - containerPort: 8080
+
   networking:
     apiVersion: v1
     kind: Service
     metadata:
       name: backend
+    spec:
+      selector:
+        app: backend
+      ports:
+        - port: 80
+          targetPort: 8080
 "#,
             "multiple",
         );
@@ -767,6 +958,94 @@ metadata:
         ];
 
         let result = crate::generator::k8s_generator::plan_all_kubernetes(None, &manifests);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_deployment_without_containers() {
+        let resource: Value = serde_yaml::from_str(
+            r#"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers: []
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_supported_manifest(&resource, "k8s.backend").is_err());
+    }
+
+    #[test]
+    fn rejects_deployment_selector_mismatch() {
+        let resource: Value = serde_yaml::from_str(
+            r#"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: backend
+          image: backend:latest
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_supported_manifest(&resource, "k8s.backend").is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_raw_service_port() {
+        let resource: Value = serde_yaml::from_str(
+            r#"
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+spec:
+  ports:
+    - port: 99999
+      targetPort: 8080
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_supported_manifest(&resource, "k8s.backend").is_err());
+    }
+
+    #[test]
+    fn rejects_raw_deployment_without_spec() {
+        let resource: Value = serde_yaml::from_str(
+            r#"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+"#,
+        )
+        .unwrap();
+
+        let result = validate_supported_manifest(&resource, "k8s.backend");
 
         assert!(result.is_err());
     }

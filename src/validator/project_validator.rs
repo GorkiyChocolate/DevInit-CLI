@@ -87,37 +87,90 @@ pub fn validate_declarations(document: &Value) -> Result<(), String> {
     Ok(())
 }
 
-/// Parse a simple Compose published-port mapping:
-/// 8080:80, 127.0.0.1:8080:80 or 8080:80/udp.
+/// Parses a supported Docker Compose short port mapping.
 ///
-/// Complex mappings are left to the existing Compose validation.
-fn published_port(value: &Value) -> Option<(u16, String, String)> {
-    let text = value.as_str()?;
-    let (without_protocol, protocol) = text.rsplit_once('/').unwrap_or((text, "tcp"));
+/// Supported:
+/// - "80"
+/// - "8080:80"
+/// - "127.0.0.1:8080:80"
+/// - "8080:80/tcp"
+/// - "8080:80/udp"
+///
+/// IPv6 mappings and port ranges are left to a dedicated
+/// Compose-compatible validator.
+fn published_port(value: &Value) -> Result<Option<(u16, String, String)>, String> {
+    let text = value
+        .as_str()
+        .ok_or("Port mapping must be a string")?
+        .trim();
 
-    let parts: Vec<&str> = without_protocol.split(':').collect();
-
-    if parts.len() < 2 {
-        // Container-only port: no published host port.
-        return None;
+    if text.is_empty() {
+        return Err("Port mapping must not be empty".into());
     }
 
-    let (host, host_port) = if parts.len() == 2 {
-        ("0.0.0.0", parts[0])
-    } else if parts.len() == 3 {
-        (parts[0], parts[1])
-    } else {
-        // IPv6 and complex formats are not checked here.
-        return None;
+    let (mapping, protocol) = match text.rsplit_once('/') {
+        Some((mapping, protocol)) => {
+            if !matches!(protocol, "tcp" | "udp" | "sctp") {
+                return Err(format!(
+                    "Unsupported port protocol '{protocol}' in '{text}'"
+                ));
+            }
+
+            (mapping, protocol)
+        }
+
+        None => (text, "tcp"),
     };
 
-    let port = host_port.parse::<u16>().ok()?;
-
-    if port == 0 {
-        return None;
+    // Complex Compose syntax requires a separate parser.
+    // Do not incorrectly interpret bracketed IPv6 addresses
+    // or port ranges as simple bindings.
+    if mapping.contains('[') || mapping.contains(']') || mapping.contains('-') {
+        return Ok(None);
     }
 
-    Some((port, protocol.to_ascii_lowercase(), host.to_string()))
+    let parts: Vec<&str> = mapping.split(':').collect();
+
+    let (host, published, target) = match parts.as_slice() {
+        [target] => ("0.0.0.0", None, *target),
+
+        [published, target] => ("0.0.0.0", Some(*published), *target),
+
+        [host, published, target] => {
+            if host.is_empty() {
+                return Err(format!("Host address must not be empty in '{text}'"));
+            }
+
+            (*host, Some(*published), *target)
+        }
+
+        _ => {
+            return Err(format!("Invalid port mapping format: '{text}'"));
+        }
+    };
+
+    fn parse_port(value: &str, mapping: &str) -> Result<u16, String> {
+        let port = value
+            .parse::<u16>()
+            .map_err(|_| format!("Invalid port '{value}' in '{mapping}'"))?;
+
+        if port == 0 {
+            return Err(format!("Port must be between 1 and 65535 in '{mapping}'"));
+        }
+
+        Ok(port)
+    }
+
+    // Target port is always required.
+    parse_port(target, text)?;
+
+    let Some(published) = published else {
+        return Ok(None);
+    };
+
+    let published = parse_port(published, text)?;
+
+    Ok(Some((published, protocol.to_string(), host.to_string())))
 }
 
 /// Validate resolved recipes before generators write any files.
@@ -150,11 +203,11 @@ pub fn validate_resolved_services(document: &Value) -> Result<(), String> {
             .ok_or_else(|| format!("services[{index}] ('{name}').ports must be a list"))?;
 
         for entry in entries {
-            let Some((port, protocol, host)) = published_port(entry) else {
-                // Unsupported syntax is left to existing validators.
+            let Some((port, protocol, host)) = published_port(entry)
+                .map_err(|error| format!("services[{index}] ('{name}').ports: {error}"))?
+            else {
                 continue;
             };
-
             let key = (port, protocol.clone());
             let bindings = ports.entry(key).or_default();
 
@@ -243,5 +296,116 @@ mod tests {
         let doc = parse("services:\n  - name: api\n    ports: ['8080:80', '8080:81']\n");
 
         assert!(validate_resolved_services(&doc).is_err());
+    }
+
+    #[test]
+    fn accepts_valid_port_mappings() {
+        let doc = parse(
+            r#"
+services:
+  - name: api
+    ports:
+      - "8080:80"
+      - "127.0.0.1:8081:81"
+      - "8082:82/udp"
+      - "83"
+"#,
+        );
+
+        assert!(validate_resolved_services(&doc).is_ok());
+    }
+
+    #[test]
+    fn rejects_out_of_range_published_port() {
+        let doc = parse(
+            r#"
+services:
+  - name: api
+    ports:
+      - "99999:80"
+"#,
+        );
+
+        assert!(validate_resolved_services(&doc).is_err());
+    }
+
+    #[test]
+    fn rejects_out_of_range_target_port() {
+        let doc = parse(
+            r#"
+services:
+  - name: api
+    ports:
+      - "8080:99999"
+"#,
+        );
+
+        assert!(validate_resolved_services(&doc).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_ports() {
+        for port in ["0:80", "8080:0", "0"] {
+            let yaml = format!("services:\n  - name: api\n    ports: ['{port}']\n");
+
+            let doc = parse(&yaml);
+
+            assert!(
+                validate_resolved_services(&doc).is_err(),
+                "Expected rejection for {port}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_protocol() {
+        let doc = parse(
+            r#"
+services:
+  - name: api
+    ports:
+      - "8080:80/invalid"
+"#,
+        );
+
+        assert!(validate_resolved_services(&doc).is_err());
+    }
+
+    #[test]
+    fn accepts_same_port_with_different_protocols() {
+        let doc = parse(
+            r#"
+services:
+  - name: api
+    ports:
+      - "8080:80/tcp"
+
+  - name: dns
+    ports:
+      - "8080:53/udp"
+"#,
+        );
+
+        assert!(validate_resolved_services(&doc).is_ok());
+    }
+
+    #[test]
+    fn rejects_conflicting_published_ports() {
+        let doc = parse(
+            r#"
+services:
+  - name: backend
+    ports:
+      - "8080:3000"
+
+  - name: frontend
+    ports:
+      - "8080:80"
+"#,
+        );
+
+        let error = validate_resolved_services(&doc).unwrap_err();
+
+        assert!(error.contains("8080/tcp"));
     }
 }
