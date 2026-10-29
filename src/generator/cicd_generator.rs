@@ -1,9 +1,42 @@
 use crate::errors::GenerationError;
 use crate::file_config::yaml_writer::write_yaml_with_options;
+use crate::generation_plan::GeneratedFile;
 use crate::models::cicd_struct::{CiProvider, Pipeline, Runner, StepAction, Trigger};
+
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// Renders a CI/CD pipeline into YAML without writing files.
+pub fn render_cicd(pipeline: &Pipeline) -> Result<String, GenerationError> {
+    let yaml = match pipeline.provider {
+        CiProvider::Github => {
+            let workflow = GithubWorkflow::from_pipeline(pipeline);
+            serde_yaml::to_string(&workflow)?
+        }
+
+        CiProvider::Gitlab => {
+            let workflow = GitlabPipeline::from_pipeline(pipeline);
+            serde_yaml::to_string(&workflow)?
+        }
+    };
+
+    Ok(yaml)
+}
+
+/// Prepares a CI/CD configuration as a GeneratedFile.
+///
+/// This function does not interact with the filesystem.
+pub fn plan_cicd(pipeline: &Pipeline) -> Result<GeneratedFile, GenerationError> {
+    let relative_path = match pipeline.provider {
+        CiProvider::Github => ".github/workflows/devinit.yml",
+        CiProvider::Gitlab => ".gitlab-ci.yml",
+    };
+
+    let contents = render_cicd(pipeline)?;
+
+    GeneratedFile::new(relative_path, contents)
+}
 
 /// Generates a CI/CD file for the selected provider.
 pub fn generate_cicd(
@@ -239,5 +272,127 @@ fn gitlab_command(step: &crate::models::cicd_struct::Step) -> Option<String> {
             Some(format!("docker build -f {dockerfile} -t {image} ."))
         }
         StepAction::DockerPush { image } => Some(format!("docker push {image}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pipeline(yaml: &str) -> Pipeline {
+        serde_yaml::from_str(yaml).unwrap()
+    }
+
+    #[test]
+    fn plans_github_actions() {
+        let config = pipeline(
+            r#"
+provider: github
+triggers:
+  - type: push
+    branches:
+      - main
+
+jobs:
+  - name: build
+    runner: ubuntu-latest
+    steps:
+      - name: Checkout
+        action: checkout
+      - name: Build
+        action: run
+        command: cargo build
+"#,
+        );
+
+        let file = plan_cicd(&config).unwrap();
+
+        assert_eq!(
+            file.relative_path,
+            PathBuf::from(".github/workflows/devinit.yml")
+        );
+
+        let document: serde_yaml::Value = serde_yaml::from_str(&file.contents).unwrap();
+
+        assert_eq!(document["name"].as_str(), Some("DevInit"));
+
+        assert_eq!(
+            document["jobs"]["build"]["runs-on"].as_str(),
+            Some("ubuntu-latest")
+        );
+
+        assert_eq!(
+            document["jobs"]["build"]["steps"][1]["run"].as_str(),
+            Some("cargo build")
+        );
+    }
+
+    #[test]
+    fn plans_gitlab_pipeline() {
+        let config = pipeline(
+            r#"
+provider: gitlab
+jobs:
+  - name: build
+    steps:
+      - name: Build application
+        action: run
+        command: cargo build
+"#,
+        );
+
+        let file = plan_cicd(&config).unwrap();
+
+        assert_eq!(file.relative_path, PathBuf::from(".gitlab-ci.yml"));
+
+        let document: serde_yaml::Value = serde_yaml::from_str(&file.contents).unwrap();
+
+        assert_eq!(document["stages"][0].as_str(), Some("build"));
+
+        assert_eq!(document["build"]["script"][0].as_str(), Some("cargo build"));
+    }
+
+    #[test]
+    fn rendering_matches_existing_github_serializer() {
+        let config = pipeline(
+            r#"
+provider: github
+triggers:
+  - type: manual
+jobs:
+  - name: test
+    steps:
+      - name: Run tests
+        action: run
+        command: cargo test
+"#,
+        );
+
+        let rendered = render_cicd(&config).unwrap();
+
+        let expected = serde_yaml::to_string(&GithubWorkflow::from_pipeline(&config)).unwrap();
+
+        assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn rendering_matches_existing_gitlab_serializer() {
+        let config = pipeline(
+            r#"
+provider: gitlab
+jobs:
+  - name: test
+    steps:
+      - name: Run tests
+        action: run
+        command: cargo test
+"#,
+        );
+
+        let rendered = render_cicd(&config).unwrap();
+
+        let expected = serde_yaml::to_string(&GitlabPipeline::from_pipeline(&config)).unwrap();
+
+        assert_eq!(rendered, expected);
     }
 }
