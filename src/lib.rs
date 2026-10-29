@@ -42,4 +42,6 @@ pub mod docker {
 }
 
 pub mod errors;
+pub mod ir;
+pub mod resolver;
 pub mod service_registry;

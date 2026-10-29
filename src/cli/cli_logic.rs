@@ -1,5 +1,5 @@
 use crate::errors::{DevinitError, ValidationError};
-use crate::{api, cli, file_config, generator, validator};
+use crate::{api, cli, file_config, generator};
 use std::{
     env,
     path::{Path, PathBuf},
@@ -25,12 +25,18 @@ pub fn compile_at_with_options(
     output_dir: &Path,
     force: bool,
 ) -> Result<Vec<PathBuf>, DevinitError> {
+    // 1. Parse YAML and resolve registry recipes.
     let spec = load_compile_with_registry(input_path)?;
-    // Stop generation when configuration validation fails.
-    if let Err(errors) = validator::compile_validator::validate_compile(&spec) {
-        return Err(DevinitError::ValidationErrors(errors));
-    }
-    Ok(generator::generate_with_options(&spec, output_dir, force)?)
+
+    // 2. Build validated intermediate representation.
+    let ir = crate::ir::ResolvedCompileSpec::build(spec).map_err(DevinitError::ValidationErrors)?;
+
+    // 3. Generate infrastructure from validated configuration.
+    Ok(generator::generate_with_options(
+        ir.spec(),
+        output_dir,
+        force,
+    )?)
 }
 
 /// Prints validation errors in a readable command-line format.

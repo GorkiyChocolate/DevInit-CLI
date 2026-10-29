@@ -28,16 +28,18 @@ pub fn generate_docker_compose_with_options(
 
     let compose = DockerComposeFile {
         services: compose_services,
+        volumes: collect_named_volumes(services),
     };
     let path = write_yaml_with_options(&compose, &output_dir.join("docker-compose.yaml"), force)?;
     Ok(vec![path])
 }
 
 #[derive(Debug, Serialize)]
-/// Represents the root Docker Compose document.
 struct DockerComposeFile {
-    /// Maps service names to their Compose definitions.
     services: BTreeMap<String, ComposeService>,
+
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    volumes: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,5 +90,109 @@ impl ComposeService {
             command: recipe.command.clone(),
             labels,
         }
+    }
+}
+
+/// Extracts a named volume from a Compose short-syntax mount.
+///
+/// Examples:
+/// - "postgres_data:/var/lib/postgresql/data" -> Some("postgres_data")
+/// - "./data:/data" -> None
+/// - "/host/data:/data" -> None
+/// - "/data" -> None
+fn named_volume(mount: &str) -> Option<&str> {
+    let mut parts = mount.split(':');
+
+    let source = parts.next()?;
+    let target = parts.next()?;
+
+    if source.is_empty() || target.is_empty() {
+        return None;
+    }
+
+    // Ignore bind mounts and filesystem paths.
+    if source.starts_with('/')
+        || source.starts_with('.')
+        || source.starts_with('~')
+        || source.contains('/')
+        || source.contains('\\')
+    {
+        return None;
+    }
+
+    // Docker volume names may contain letters, numbers,
+    // underscores, periods and hyphens.
+    if !source
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.')
+    {
+        return None;
+    }
+
+    if !source.bytes().next()?.is_ascii_alphanumeric() {
+        return None;
+    }
+
+    Some(source)
+}
+
+/// Collects named volumes referenced by service recipes.
+fn collect_named_volumes(
+    services: &[CompileService],
+) -> BTreeMap<String, BTreeMap<String, String>> {
+    let mut volumes = BTreeMap::new();
+
+    for service in services {
+        let recipe = service.to_recipe();
+
+        if let Some(mounts) = &recipe.volumes {
+            for mount in mounts {
+                if let Some(name) = named_volume(mount) {
+                    volumes
+                        .entry(name.to_string())
+                        .or_insert_with(BTreeMap::new);
+                }
+            }
+        }
+    }
+
+    volumes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_named_volume() {
+        assert_eq!(
+            named_volume("postgres_data:/var/lib/postgresql/data"),
+            Some("postgres_data")
+        );
+    }
+
+    #[test]
+    fn ignores_relative_bind_mount() {
+        assert_eq!(named_volume("./data:/var/lib/postgresql/data"), None);
+    }
+
+    #[test]
+    fn ignores_absolute_bind_mount() {
+        assert_eq!(named_volume("/home/user/data:/data"), None);
+    }
+
+    #[test]
+    fn ignores_anonymous_volume() {
+        assert_eq!(named_volume("/var/lib/postgresql/data"), None);
+    }
+
+    #[test]
+    fn supports_read_only_named_volume() {
+        assert_eq!(named_volume("shared_data:/data:ro"), Some("shared_data"));
+    }
+
+    #[test]
+    fn rejects_invalid_volume_name() {
+        assert_eq!(named_volume("invalid name:/data"), None);
     }
 }

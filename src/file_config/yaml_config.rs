@@ -61,8 +61,14 @@ fn append_recipes(recipes: &[RecipeCompose], path: &PathBuf) -> std::io::Result<
     Ok(())
 }
 
-/// Loads compile.yaml and resolves service references
-/// from the local registry before validation.
+/// Loads a compile specification and resolves registry recipes.
+///
+/// Pipeline:
+/// 1. Read YAML
+/// 2. Validate declarations
+/// 3. Resolve versions and apply overrides
+/// 4. Validate resolved services
+/// 5. Deserialize into CompileSpec
 pub fn load_compile_with_registry(path: &Path) -> Result<CompileSpec, DevinitError> {
     if !path.exists() {
         return Err(DevinitError::ConfigurationError(format!(
@@ -77,6 +83,7 @@ pub fn load_compile_with_registry(path: &Path) -> Result<CompileSpec, DevinitErr
 
     let mut document: serde_yaml::Value = serde_yaml::from_str(&contents)?;
 
+    // Validate input declarations before resolution.
     crate::validator::project_validator::validate_declarations(&document).map_err(|message| {
         DevinitError::ValidationErrors(vec![ValidationError {
             path: "services".to_string(),
@@ -86,77 +93,10 @@ pub fn load_compile_with_registry(path: &Path) -> Result<CompileSpec, DevinitErr
 
     let project_root = path.parent().unwrap_or_else(|| Path::new("."));
 
-    if let Some(services) = document
-        .get_mut("services")
-        .and_then(serde_yaml::Value::as_sequence_mut)
-    {
-        for (index, service) in services.iter_mut().enumerate() {
-            let Some(mapping) = service.as_mapping() else {
-                // Preserve existing scalar service syntax.
-                continue;
-            };
+    // Resolve registry services and apply user overrides.
+    crate::resolver::resolve_document(&mut document, project_root)?;
 
-            // Explicit custom recipes already have an image.
-            // They do not need registry resolution.
-            if mapping.contains_key(serde_yaml::Value::String("image".into())) {
-                continue;
-            }
-
-            let name = mapping
-                .get(serde_yaml::Value::String("name".into()))
-                .and_then(serde_yaml::Value::as_str)
-                .map(str::to_owned);
-
-            let Some(name) = name else {
-                continue;
-            };
-
-            let version_value = mapping.get(serde_yaml::Value::String("version".into()));
-
-            let version = match version_value {
-                None => None,
-                Some(value) => Some(value.as_str().ok_or_else(|| {
-                    DevinitError::ConfigurationError(format!(
-                        "services[{index}].version must be a string"
-                    ))
-                })?),
-            };
-
-            if mapping.len() != (1 + usize::from(version.is_some())) {
-                return Err(DevinitError::ConfigurationError(format!(
-                    "services[{index}]: registry references only support name and version"
-                )));
-            }
-
-            let is_builtin = crate::service_registry::builtin_recipe(&name).is_some();
-
-            let recipe = if is_builtin {
-                // Reject unsupported versions of built-in services.
-                let expected = crate::service_registry::builtin_recipe_version(&name, version)
-                    .ok_or_else(|| {
-                        DevinitError::ConfigurationError(format!(
-                            "Unsupported version for service '{name}'"
-                        ))
-                    })?;
-
-                crate::service_registry::cached_recipe_version(project_root, &name, version)
-                    .map_err(DevinitError::FileIOError)?
-                    .unwrap_or(expected)
-            } else {
-                crate::service_registry::cached_recipe_version(project_root, &name, version)
-                    .map_err(DevinitError::FileIOError)?
-                    .ok_or_else(|| {
-                        DevinitError::ServiceNotFound(format!(
-                            "{name} (version: {})",
-                            version.unwrap_or("default")
-                        ))
-                    })?
-            };
-
-            *service = serde_yaml::to_value(recipe)?;
-        }
-    }
-
+    // Validate the resulting infrastructure configuration.
     crate::validator::project_validator::validate_resolved_services(&document).map_err(
         |message| {
             DevinitError::ValidationErrors(vec![ValidationError {

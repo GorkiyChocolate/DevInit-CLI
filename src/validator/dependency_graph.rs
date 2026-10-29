@@ -1,5 +1,6 @@
 use crate::errors::ValidationError;
 use crate::models::compile_struct::CompileSpec;
+use std::collections::BTreeSet;
 use std::collections::{HashMap, HashSet};
 
 pub fn validate_dependency_graph(spec: &CompileSpec, errors: &mut Vec<ValidationError>) {
@@ -106,6 +107,83 @@ fn detect_cycles(
     states[node] = 2;
 }
 
+/// Returns service names in dependency-first order.
+///
+/// Services without dependencies are ordered alphabetically,
+/// ensuring deterministic results.
+///
+/// Returns validation errors when the dependency graph is invalid.
+pub fn topological_sort(spec: &CompileSpec) -> Result<Vec<String>, Vec<ValidationError>> {
+    // Reuse the existing graph validator.
+    let mut errors = Vec::new();
+    validate_dependency_graph(spec, &mut errors);
+
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+
+    let recipes: Vec<_> = spec
+        .services
+        .iter()
+        .map(|service| service.to_recipe())
+        .collect();
+
+    // name -> number of unresolved dependencies
+    let mut indegree = HashMap::<String, usize>::new();
+
+    // dependency -> services depending on it
+    let mut dependents = HashMap::<String, Vec<String>>::new();
+
+    for recipe in &recipes {
+        let dependencies = recipe.depends_on.as_deref().unwrap_or(&[]);
+
+        indegree.insert(recipe.name.clone(), dependencies.len());
+
+        for dependency in dependencies {
+            dependents
+                .entry(dependency.clone())
+                .or_default()
+                .push(recipe.name.clone());
+        }
+    }
+
+    // BTreeSet ensures deterministic alphabetical ordering.
+    let mut ready = BTreeSet::new();
+
+    for (name, degree) in &indegree {
+        if *degree == 0 {
+            ready.insert(name.clone());
+        }
+    }
+
+    let mut ordered = Vec::with_capacity(recipes.len());
+
+    while let Some(name) = ready.pop_first() {
+        ordered.push(name.clone());
+
+        if let Some(children) = dependents.get(&name) {
+            for child in children {
+                if let Some(degree) = indegree.get_mut(child) {
+                    *degree -= 1;
+
+                    if *degree == 0 {
+                        ready.insert(child.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // Defensive check: validation should have rejected all cycles.
+    if ordered.len() != recipes.len() {
+        return Err(vec![ValidationError {
+            path: "services".to_string(),
+            message: "dependency ordering failed: cyclic graph".to_string(),
+        }]);
+    }
+
+    Ok(ordered)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,5 +277,82 @@ mod tests {
                 .iter()
                 .any(|e| e.message.contains("defined more than once"))
         );
+    }
+
+    fn spec(items: Vec<CompileService>) -> CompileSpec {
+        CompileSpec {
+            services: items,
+            kubernetes: None,
+            cicd: None,
+        }
+    }
+
+    #[test]
+    fn sorts_dependency_chain() {
+        let config = spec(vec![
+            service("gateway", &["backend"]),
+            service("backend", &["redis"]),
+            service("redis", &[]),
+        ]);
+
+        let ordered = topological_sort(&config).unwrap();
+
+        assert_eq!(ordered, vec!["redis", "backend", "gateway"]);
+    }
+
+    #[test]
+    fn sorts_independent_services_deterministically() {
+        let config = spec(vec![
+            service("redis", &[]),
+            service("api", &[]),
+            service("postgresql", &[]),
+        ]);
+
+        let ordered = topological_sort(&config).unwrap();
+
+        assert_eq!(ordered, vec!["api", "postgresql", "redis"]);
+    }
+
+    #[test]
+    fn sorts_complex_dependency_graph() {
+        let config = spec(vec![
+            service("gateway", &["backend"]),
+            service("backend", &["postgresql", "redis"]),
+            service("redis", &[]),
+            service("postgresql", &[]),
+        ]);
+
+        let ordered = topological_sort(&config).unwrap();
+
+        assert_eq!(ordered, vec!["postgresql", "redis", "backend", "gateway",]);
+    }
+
+    #[test]
+    fn rejects_circular_graph_during_sort() {
+        let config = spec(vec![
+            service("api", &["worker"]),
+            service("worker", &["api"]),
+        ]);
+
+        let result = topological_sort(&config);
+
+        assert!(result.is_err());
+
+        let errors = result.unwrap_err();
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("circular dependency"))
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_dependency_during_sort() {
+        let config = spec(vec![service("backend", &["unknown-db"])]);
+
+        let result = topological_sort(&config);
+
+        assert!(result.is_err());
     }
 }
