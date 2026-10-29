@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 /// Describes all inputs used by the compiler.
 pub struct CompileSpec {
     /// Lists built-in and custom services.
+    #[serde(default)]
     pub services: Vec<CompileService>,
     /// Optionally defines a Kubernetes deployment.
     pub kubernetes: Option<Deployment>,

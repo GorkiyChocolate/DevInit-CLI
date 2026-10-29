@@ -1,0 +1,627 @@
+use crate::errors::{DevinitError, GenerationError};
+use crate::file_config::yaml_writer::write_yaml_with_options;
+use crate::generation_plan::GeneratedFile;
+use crate::models::k8s_struct::Deployment;
+
+use serde_yaml::Value;
+
+use std::collections::HashSet;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone)]
+pub struct KubernetesManifest {
+    pub file_name: String,
+    pub document: Value,
+}
+
+/// Prepares user-defined Kubernetes manifests.
+///
+/// Supports both raw resources and previously expanded templates.
+/// Does not write anything to the filesystem.
+pub fn plan_custom_manifests(
+    manifests: &[KubernetesManifest],
+) -> Result<Vec<GeneratedFile>, GenerationError> {
+    let mut files = Vec::with_capacity(manifests.len());
+
+    for manifest in manifests {
+        let yaml = serde_yaml::to_string(&manifest.document)?;
+
+        let file = GeneratedFile::new(format!("k8s/{}.yaml", manifest.file_name), yaml)?;
+
+        files.push(file);
+    }
+
+    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+
+    Ok(files)
+}
+
+fn invalid(message: impl Into<String>) -> DevinitError {
+    DevinitError::ConfigurationError(message.into())
+}
+
+fn valid_file_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 100
+        && name
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_alphanumeric())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
+}
+
+fn required_string<'a>(value: &'a Value, field: &str) -> Result<&'a str, DevinitError> {
+    let text = value
+        .as_str()
+        .filter(|text| !text.trim().is_empty())
+        .ok_or_else(|| invalid(format!("{field} must be a non-empty string")))?;
+
+    Ok(text)
+}
+
+fn template_field<'a>(resource: &'a Value, name: &str) -> Option<&'a Value> {
+    resource.as_mapping()?.get(Value::String(name.into()))
+}
+
+fn template_string<'a>(resource: &'a Value, name: &str) -> Result<&'a str, DevinitError> {
+    template_field(resource, name)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            invalid(format!(
+                "Template field '{name}' must be a non-empty string"
+            ))
+        })
+}
+
+fn template_integer(
+    resource: &Value,
+    name: &str,
+    default: u64,
+    minimum: u64,
+    maximum: u64,
+) -> Result<u64, DevinitError> {
+    let value = match template_field(resource, name) {
+        Some(value) => value.as_u64().ok_or_else(|| {
+            invalid(format!(
+                "Template field '{name}' must be a positive integer"
+            ))
+        })?,
+        None => default,
+    };
+
+    if !(minimum..=maximum).contains(&value) {
+        return Err(invalid(format!(
+            "Template field '{name}' must be between {minimum} and {maximum}"
+        )));
+    }
+
+    Ok(value)
+}
+
+fn validate_template_fields(resource: &Value, allowed: &[&str]) -> Result<(), DevinitError> {
+    let mapping = resource
+        .as_mapping()
+        .ok_or_else(|| invalid("Kubernetes template must be a mapping"))?;
+
+    for key in mapping.keys() {
+        let name = key
+            .as_str()
+            .ok_or_else(|| invalid("Template field names must be strings"))?;
+
+        if !allowed.contains(&name) {
+            return Err(invalid(format!(
+                "Unsupported Kubernetes template field: '{name}'"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_resource_name(name: &str) -> Result<(), DevinitError> {
+    if name.is_empty()
+        || name.len() > 63
+        || !name
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        || !name
+            .bytes()
+            .last()
+            .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Err(invalid(format!(
+            "Invalid Kubernetes resource name: '{name}'"
+        )));
+    }
+
+    Ok(())
+}
+
+/// Converts a short template declaration into a full
+/// Kubernetes resource.
+///
+/// Raw manifests are returned without modification.
+pub fn expand_template(resource: &Value) -> Result<Value, DevinitError> {
+    let Some(template) = template_field(resource, "template") else {
+        return Ok(resource.clone());
+    };
+
+    let template = template
+        .as_str()
+        .ok_or_else(|| invalid("'template' must be a string"))?;
+
+    match template {
+        "deployment" => expand_deployment(resource),
+        "service" => expand_service(resource),
+        other => Err(invalid(format!(
+            "Unsupported Kubernetes template: '{other}'"
+        ))),
+    }
+}
+
+fn expand_deployment(resource: &Value) -> Result<Value, DevinitError> {
+    validate_template_fields(resource, &["template", "name", "image", "replicas", "port"])?;
+
+    let name = template_string(resource, "name")?;
+    let image = template_string(resource, "image")?;
+
+    validate_resource_name(name)?;
+
+    let replicas = template_integer(resource, "replicas", 1, 0, 10000)?;
+
+    let port = template_integer(resource, "port", 8080, 1, 65535)?;
+
+    let mut deployment: Value = serde_yaml::from_str(
+        r#"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: placeholder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: placeholder
+  template:
+    metadata:
+      labels:
+        app: placeholder
+    spec:
+      containers:
+        - name: placeholder
+          image: placeholder
+          ports:
+            - containerPort: 8080
+"#,
+    )?;
+
+    deployment["metadata"]["name"] = Value::String(name.into());
+    deployment["spec"]["replicas"] = Value::Number(replicas.into());
+
+    deployment["spec"]["selector"]["matchLabels"]["app"] = Value::String(name.into());
+
+    deployment["spec"]["template"]["metadata"]["labels"]["app"] = Value::String(name.into());
+
+    let container = &mut deployment["spec"]["template"]["spec"]["containers"][0];
+
+    container["name"] = Value::String(name.into());
+    container["image"] = Value::String(image.into());
+    container["ports"][0]["containerPort"] = Value::Number(port.into());
+
+    Ok(deployment)
+}
+
+fn expand_service(resource: &Value) -> Result<Value, DevinitError> {
+    validate_template_fields(
+        resource,
+        &["template", "name", "target", "port", "targetPort", "type"],
+    )?;
+
+    let name = template_string(resource, "name")?;
+    let target = template_string(resource, "target")?;
+
+    validate_resource_name(name)?;
+    validate_resource_name(target)?;
+
+    let port = template_integer(resource, "port", 80, 1, 65535)?;
+
+    let target_port = template_integer(resource, "targetPort", port, 1, 65535)?;
+
+    let service_type = template_field(resource, "type")
+        .map(|_| template_string(resource, "type"))
+        .transpose()?
+        .unwrap_or("ClusterIP");
+
+    if !matches!(service_type, "ClusterIP" | "NodePort" | "LoadBalancer") {
+        return Err(invalid(format!(
+            "Unsupported Kubernetes Service type: '{service_type}'"
+        )));
+    }
+
+    let mut service: Value = serde_yaml::from_str(
+        r#"
+apiVersion: v1
+kind: Service
+metadata:
+  name: placeholder
+spec:
+  type: ClusterIP
+  selector:
+    app: placeholder
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+"#,
+    )?;
+
+    service["metadata"]["name"] = Value::String(name.into());
+    service["spec"]["type"] = Value::String(service_type.into());
+
+    service["spec"]["selector"]["app"] = Value::String(target.into());
+
+    service["spec"]["ports"][0]["port"] = Value::Number(port.into());
+
+    service["spec"]["ports"][0]["targetPort"] = Value::Number(target_port.into());
+
+    Ok(service)
+}
+
+/// Performs structural validation for supported Kubernetes resources.
+///
+/// This is intentionally not a complete Kubernetes schema validator.
+fn validate_supported_manifest(resource: &Value, context: &str) -> Result<(), DevinitError> {
+    let kind = resource.get("kind").and_then(Value::as_str).unwrap_or("");
+
+    match kind {
+        "Deployment" => {
+            let spec = resource
+                .get("spec")
+                .ok_or_else(|| invalid(format!("{context}.spec is required")))?;
+
+            let selector = spec
+                .get("selector")
+                .and_then(|v| v.get("matchLabels"))
+                .and_then(Value::as_mapping)
+                .ok_or_else(|| {
+                    invalid(format!("{context}.spec.selector.matchLabels is required"))
+                })?;
+
+            if selector.is_empty() {
+                return Err(invalid(format!(
+                    "{context}.spec.selector.matchLabels must not be empty"
+                )));
+            }
+
+            let template = spec
+                .get("template")
+                .ok_or_else(|| invalid(format!("{context}.spec.template is required")))?;
+
+            let labels = template
+                .get("metadata")
+                .and_then(|v| v.get("labels"))
+                .and_then(Value::as_mapping)
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "{context}.spec.template.metadata.labels is required"
+                    ))
+                })?;
+
+            for (key, value) in selector {
+                if labels.get(key) != Some(value) {
+                    return Err(invalid(format!(
+                        "{context}: Deployment selector does not match Pod labels"
+                    )));
+                }
+            }
+
+            let containers = template
+                .get("spec")
+                .and_then(|v| v.get("containers"))
+                .and_then(Value::as_sequence)
+                .filter(|items| !items.is_empty())
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "{context}.spec.template.spec.containers \
+                         must be a non-empty list"
+                    ))
+                })?;
+
+            for (index, container) in containers.iter().enumerate() {
+                let path = format!("{context}.spec.template.spec.containers[{index}]");
+
+                for field in ["name", "image"] {
+                    container
+                        .get(field)
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.trim().is_empty())
+                        .ok_or_else(|| {
+                            invalid(format!("{path}.{field} must be a non-empty string"))
+                        })?;
+                }
+
+                if let Some(ports) = container.get("ports") {
+                    let ports = ports
+                        .as_sequence()
+                        .ok_or_else(|| invalid(format!("{path}.ports must be a list")))?;
+
+                    for (port_index, port) in ports.iter().enumerate() {
+                        let number = port
+                            .get("containerPort")
+                            .and_then(Value::as_u64)
+                            .filter(|port| (1..=65535).contains(port))
+                            .ok_or_else(|| {
+                                invalid(format!(
+                                    "{path}.ports[{port_index}].containerPort \
+                                     must be between 1 and 65535"
+                                ))
+                            })?;
+
+                        let _ = number;
+                    }
+                }
+            }
+        }
+
+        "Service" => {
+            let spec = resource
+                .get("spec")
+                .ok_or_else(|| invalid(format!("{context}.spec is required")))?;
+
+            let service_type = spec
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("ClusterIP");
+
+            if !matches!(
+                service_type,
+                "ClusterIP" | "NodePort" | "LoadBalancer" | "ExternalName"
+            ) {
+                return Err(invalid(format!(
+                    "{context}.spec.type: unsupported Service type"
+                )));
+            }
+
+            if service_type == "ExternalName" {
+                spec.get("externalName")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.trim().is_empty())
+                    .ok_or_else(|| invalid(format!("{context}.spec.externalName is required")))?;
+            }
+
+            if let Some(ports) = spec.get("ports") {
+                let ports = ports
+                    .as_sequence()
+                    .ok_or_else(|| invalid(format!("{context}.spec.ports must be a list")))?;
+
+                for (index, port) in ports.iter().enumerate() {
+                    for field in ["port", "nodePort"] {
+                        if let Some(value) = port.get(field) {
+                            let valid = value
+                                .as_u64()
+                                .is_some_and(|number| (1..=65535).contains(&number));
+
+                            if !valid {
+                                return Err(invalid(format!(
+                                    "{context}.spec.ports[{index}].{field} \
+                                     must be between 1 and 65535"
+                                )));
+                            }
+                        }
+                    }
+
+                    if let Some(value) = port.get("targetPort") {
+                        let valid_number = value
+                            .as_u64()
+                            .is_some_and(|number| (1..=65535).contains(&number));
+
+                        let valid_name = value.as_str().is_some_and(|name| !name.trim().is_empty());
+
+                        if !valid_number && !valid_name {
+                            return Err(invalid(format!(
+                                "{context}.spec.ports[{index}].targetPort \
+                                 must be a valid port number or name"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Other Kubernetes resources are preserved as raw YAML.
+        _ => {}
+    }
+
+    Ok(())
+}
+
+/// Loads custom Kubernetes manifests from the `k8s` section.
+pub fn load_manifests(path: &Path) -> Result<Vec<KubernetesManifest>, DevinitError> {
+    let contents = fs::read_to_string(path).map_err(DevinitError::FileIOError)?;
+
+    let mut document: Value = serde_yaml::from_str(&contents)?;
+
+    let project_root = path.parent().unwrap_or_else(|| Path::new("."));
+
+    crate::presets::expand_infrastructure_presets(&mut document, project_root)?;
+
+    let Some(k8s) = document.get("k8s") else {
+        return Ok(Vec::new());
+    };
+
+    let manifests = k8s
+        .as_mapping()
+        .ok_or_else(|| invalid("k8s must be a mapping of manifest names to resources"))?;
+
+    let mut result = Vec::new();
+    let mut identities = HashSet::new();
+
+    for (file_key, resource) in manifests {
+        let name = required_string(file_key, "k8s manifest name")?;
+
+        if !valid_file_name(name) {
+            return Err(invalid(format!(
+                "Invalid Kubernetes manifest filename: {name}"
+            )));
+        }
+
+        let expanded = expand_template(resource)?;
+        let resource = &expanded;
+        validate_supported_manifest(resource, &format!("k8s.{name}"))?;
+
+        let mapping = resource.as_mapping().ok_or_else(|| {
+            invalid(format!(
+                "k8s.{name} must contain a Kubernetes resource object"
+            ))
+        })?;
+
+        let api_version = required_string(
+            mapping
+                .get(Value::String("apiVersion".into()))
+                .unwrap_or(&Value::Null),
+            &format!("k8s.{name}.apiVersion"),
+        )?;
+
+        let kind = required_string(
+            mapping
+                .get(Value::String("kind".into()))
+                .unwrap_or(&Value::Null),
+            &format!("k8s.{name}.kind"),
+        )?;
+
+        let metadata = mapping
+            .get(Value::String("metadata".into()))
+            .ok_or_else(|| invalid(format!("k8s.{name}.metadata is required")))?;
+
+        let metadata_name = required_string(
+            metadata.get("name").unwrap_or(&Value::Null),
+            &format!("k8s.{name}.metadata.name"),
+        )?;
+
+        let namespace = metadata
+            .get("namespace")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+
+        // Different files must not declare the same Kubernetes
+        // resource identity.
+        let identity = (
+            api_version.to_owned(),
+            kind.to_owned(),
+            namespace.to_owned(),
+            metadata_name.to_owned(),
+        );
+
+        if !identities.insert(identity) {
+            return Err(invalid(format!(
+                "Duplicate Kubernetes resource in k8s.{name}: \
+                 {kind}/{metadata_name}"
+            )));
+        }
+
+        result.push(KubernetesManifest {
+            file_name: name.to_owned(),
+            document: resource.clone(),
+        });
+    }
+
+    // Stable output order regardless of declaration order.
+    result.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+
+    Ok(result)
+}
+
+/// Checks path collisions and existing destination files.
+///
+/// The legacy Deployment generator is also considered to avoid
+/// generating the same output path twice.
+pub fn preflight(
+    manifests: &[KubernetesManifest],
+    output_dir: &Path,
+    force: bool,
+    legacy: Option<&Deployment>,
+) -> Result<(), DevinitError> {
+    let mut reserved = HashSet::new();
+
+    if let Some(deployment) = legacy {
+        let name = &deployment.metadata.name;
+
+        reserved.insert(format!("{name}-deployment.yaml"));
+
+        if crate::generator::k8s_service_generator::build_service(deployment).is_some() {
+            reserved.insert(format!("{name}-service.yaml"));
+        }
+    }
+
+    for manifest in manifests {
+        let filename = format!("{}.yaml", manifest.file_name);
+
+        if reserved.contains(&filename) {
+            return Err(invalid(format!(
+                "Kubernetes manifest '{}' conflicts with \
+                 a legacy generated resource",
+                manifest.file_name
+            )));
+        }
+
+        let destination = output_dir.join("k8s").join(filename);
+
+        if !force {
+            match destination.symlink_metadata() {
+                Ok(_) => {
+                    return Err(DevinitError::FileIOError(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        format!(
+                            "Refusing to overwrite {} (use --force)",
+                            destination.display()
+                        ),
+                    )));
+                }
+
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+
+                Err(error) => {
+                    return Err(DevinitError::FileIOError(error));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Writes already validated Kubernetes manifests.
+///
+/// Preflight must be called before generating any output.
+pub fn write_manifests(
+    manifests: &[KubernetesManifest],
+    output_dir: &Path,
+    force: bool,
+) -> Result<Vec<PathBuf>, GenerationError> {
+    let mut generated = Vec::new();
+
+    for manifest in manifests {
+        let path = output_dir
+            .join("k8s")
+            .join(format!("{}.yaml", manifest.file_name));
+
+        let written = write_yaml_with_options(&manifest.document, &path, force)?;
+
+        generated.push(written);
+    }
+
+    Ok(generated)
+}
+
+#[cfg(test)]
+#[path = "../tests/k8s_manifests_tests.rs"]
+mod tests;

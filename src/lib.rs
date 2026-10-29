@@ -23,10 +23,13 @@ pub mod models {
     pub mod services_struct;
 }
 
+pub mod generator;
 pub mod validator {
     pub mod cicd_validator;
     pub mod compile_validator;
+    pub mod dependency_graph;
     pub mod k8s_validator;
+    pub mod project_validator;
     pub mod services_validator;
 }
 pub mod resolved_spec {
@@ -39,4 +42,15 @@ pub mod docker {
 }
 
 pub mod errors;
-pub mod generator;
+#[path = "generation/generation_plan.rs"]
+pub mod generation_plan;
+#[path = "core/ir.rs"]
+pub mod ir;
+#[path = "generation/k8s_manifests.rs"]
+pub mod k8s_manifests;
+#[path = "config/presets.rs"]
+pub mod presets;
+#[path = "core/resolver.rs"]
+pub mod resolver;
+#[path = "core/service_registry.rs"]
+pub mod service_registry;

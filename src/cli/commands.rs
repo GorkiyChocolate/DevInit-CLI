@@ -1,4 +1,4 @@
-use clap::{Arg, Command};
+use clap::{Arg, ArgAction, Command};
 
 /// Builds the top-level CLI command and its subcommands.
 pub fn build_cli() -> Command {
@@ -13,6 +13,7 @@ pub fn build_cli() -> Command {
         .subcommand(build_license_cli())
         .subcommand(build_login_cli())
         .subcommand(build_compile_cli())
+        .subcommand(build_check_cli())
         .subcommand(build_test_cli())
 }
 
@@ -93,7 +94,25 @@ fn build_login_cli() -> Command {
 
 /// Builds the compile command.
 fn build_compile_cli() -> Command {
-    Command::new("compile").about("validate and generate compile.yaml")
+    Command::new("compile")
+        .about("Validate and generate infrastructure configurations")
+        .arg(
+            Arg::new("force")
+                .long("force")
+                .help("Overwrite existing generated files")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("dry_run")
+                .long("dry-run")
+                .help("Preview generated files without writing anything")
+                .action(ArgAction::SetTrue),
+        )
+}
+
+/// Builds the configuration validation command.
+fn build_check_cli() -> Command {
+    Command::new("check").about("Validate compile.yaml without generating files")
 }
 
 /// Builds the test command.

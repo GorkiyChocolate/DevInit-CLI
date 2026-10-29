@@ -1,19 +1,60 @@
 use crate::errors::GenerationError;
-use crate::file_config::yaml_writer::write_yaml;
+use crate::file_config::yaml_writer::write_yaml_with_options;
+use crate::generation_plan::GeneratedFile;
 use crate::models::cicd_struct::{CiProvider, Pipeline, Runner, StepAction, Trigger};
+
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// Renders a CI/CD pipeline into YAML without writing files.
+pub fn render_cicd(pipeline: &Pipeline) -> Result<String, GenerationError> {
+    let yaml = match pipeline.provider {
+        CiProvider::Github => {
+            let workflow = GithubWorkflow::from_pipeline(pipeline);
+            serde_yaml::to_string(&workflow)?
+        }
+
+        CiProvider::Gitlab => {
+            let workflow = GitlabPipeline::from_pipeline(pipeline);
+            serde_yaml::to_string(&workflow)?
+        }
+    };
+
+    Ok(yaml)
+}
+
+/// Prepares a CI/CD configuration as a GeneratedFile.
+///
+/// This function does not interact with the filesystem.
+pub fn plan_cicd(pipeline: &Pipeline) -> Result<GeneratedFile, GenerationError> {
+    let relative_path = match pipeline.provider {
+        CiProvider::Github => ".github/workflows/devinit.yml",
+        CiProvider::Gitlab => ".gitlab-ci.yml",
+    };
+
+    let contents = render_cicd(pipeline)?;
+
+    GeneratedFile::new(relative_path, contents)
+}
 
 /// Generates a CI/CD file for the selected provider.
 pub fn generate_cicd(
     pipeline: &Pipeline,
     output_dir: &Path,
 ) -> Result<Vec<PathBuf>, GenerationError> {
+    generate_cicd_with_options(pipeline, output_dir, false)
+}
+
+pub fn generate_cicd_with_options(
+    pipeline: &Pipeline,
+    output_dir: &Path,
+    force: bool,
+) -> Result<Vec<PathBuf>, GenerationError> {
     // Select the provider-specific output format.
     match pipeline.provider {
-        CiProvider::Github => generate_github_actions(pipeline, output_dir),
-        CiProvider::Gitlab => generate_gitlab_ci(pipeline, output_dir),
+        CiProvider::Github => generate_github_actions(pipeline, output_dir, force),
+        CiProvider::Gitlab => generate_gitlab_ci(pipeline, output_dir, force),
     }
 }
 
@@ -21,20 +62,22 @@ pub fn generate_cicd(
 fn generate_github_actions(
     pipeline: &Pipeline,
     output_dir: &Path,
+    force: bool,
 ) -> Result<Vec<PathBuf>, GenerationError> {
     let workflow = GithubWorkflow::from_pipeline(pipeline);
     let path = output_dir.join(".github/workflows/devinit.yml");
-    Ok(vec![write_yaml(&workflow, &path)?])
+    Ok(vec![write_yaml_with_options(&workflow, &path, force)?])
 }
 
 /// Generates a GitLab CI configuration file.
 fn generate_gitlab_ci(
     pipeline: &Pipeline,
     output_dir: &Path,
+    force: bool,
 ) -> Result<Vec<PathBuf>, GenerationError> {
     let workflow = GitlabPipeline::from_pipeline(pipeline);
     let path = output_dir.join(".gitlab-ci.yml");
-    Ok(vec![write_yaml(&workflow, &path)?])
+    Ok(vec![write_yaml_with_options(&workflow, &path, force)?])
 }
 
 #[derive(Serialize)]
@@ -231,3 +274,7 @@ fn gitlab_command(step: &crate::models::cicd_struct::Step) -> Option<String> {
         StepAction::DockerPush { image } => Some(format!("docker push {image}")),
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/cicd_generator_tests.rs"]
+mod tests;

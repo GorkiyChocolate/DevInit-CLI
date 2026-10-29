@@ -1,4 +1,5 @@
 use crate::errors::DevinitError;
+use crate::errors::ValidationError;
 use crate::file_config::file_validator::{ensure_file_not_empty, ensure_images_are_new};
 use crate::models::compile_struct::CompileSpec;
 use crate::models::docker_compose_struct::{ConfigsList, RecipeCompose};
@@ -58,4 +59,58 @@ fn append_recipes(recipes: &[RecipeCompose], path: &PathBuf) -> std::io::Result<
     }
 
     Ok(())
+}
+
+/// Loads a compile specification and resolves registry recipes.
+///
+/// Pipeline:
+/// 1. Read YAML
+/// 2. Validate declarations
+/// 3. Resolve versions and apply overrides
+/// 4. Validate resolved services
+/// 5. Deserialize into CompileSpec
+pub fn load_compile_with_registry(path: &Path) -> Result<CompileSpec, DevinitError> {
+    if !path.exists() {
+        return Err(DevinitError::ConfigurationError(format!(
+            "compile file '{}' was not found",
+            path.display()
+        )));
+    }
+
+    ensure_file_not_empty(path)?;
+
+    let contents = std::fs::read_to_string(path).map_err(DevinitError::FileIOError)?;
+
+    let mut document: serde_yaml::Value = serde_yaml::from_str(&contents)?;
+
+    let project_root = path.parent().unwrap_or_else(|| Path::new("."));
+
+    crate::presets::expand_compose_presets(&mut document, project_root)?;
+
+    crate::presets::expand_infrastructure_presets(&mut document, project_root)?;
+
+    // Validate input declarations before resolution.
+    crate::validator::project_validator::validate_declarations(&document).map_err(|message| {
+        DevinitError::ValidationErrors(vec![ValidationError {
+            path: "services".to_string(),
+            message,
+        }])
+    })?;
+
+    let project_root = path.parent().unwrap_or_else(|| Path::new("."));
+
+    // Resolve registry services and apply user overrides.
+    crate::resolver::resolve_document(&mut document, project_root)?;
+
+    // Validate the resulting infrastructure configuration.
+    crate::validator::project_validator::validate_resolved_services(&document).map_err(
+        |message| {
+            DevinitError::ValidationErrors(vec![ValidationError {
+                path: "services".to_string(),
+                message,
+            }])
+        },
+    )?;
+
+    Ok(serde_yaml::from_value(document)?)
 }
