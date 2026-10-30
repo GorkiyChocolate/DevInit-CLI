@@ -31,27 +31,31 @@ jobs:
             path: dist/devinit-linux-x64.tar.gz
             if-no-files-found: error
 
-  
-        - name: Test and build
-          shell: pwsh
-          run: |
-            cargo test --locked
-            cargo build --release --locked --bin devinit
-            .\target\release\devinit.exe --version
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      
+      - name: Test and build
+        shell: pwsh
+        run: |
+          cargo test --locked
+          cargo build --release --locked --bin devinit
+          .\target\release\devinit.exe --version
 
-        - name: Package portable binary
-          shell: pwsh
-          run: |
-            New-Item -ItemType Directory -Force dist/package/resources/services | Out-Null
-            Copy-Item target/release/devinit.exe dist/package/devinit.exe
-            Copy-Item resources/services/*.yaml dist/package/resources/services/
-            Compress-Archive -Path dist/package/* -DestinationPath dist/devinit-windows-x64.zip
+      - name: Package portable binary
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/package/resources/services | Out-Null
+          Copy-Item target/release/devinit.exe dist/package/devinit.exe
+          Copy-Item resources/services/*.yaml dist/package/resources/services/
+          Compress-Archive -Path dist/package/* -DestinationPath dist/devinit-windows-x64.zip
 
-        - name: Build installer
-          shell: pwsh
-          run: |
-            $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
-            if (!(Test-Path $compiler)) { throw 'Inno Setup 6 is missing on the Windows runner' }
-            & $compiler '/DAppVersion=0.0.2' '/DBinaryDir=target\release' '/DOutputDir=dist' 'installer\windows\DevInit.iss'
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (!(Test-Path $compiler)) { throw 'Inno Setup 6 is missing on the Windows runner' }
+          & $compiler '/DAppVersion=0.0.2' '/DBinaryDir=target\release' '/DOutputDir=dist' 'installer\windows\DevInit.iss'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
