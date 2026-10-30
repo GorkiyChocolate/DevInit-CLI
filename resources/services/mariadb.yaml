@@ -1,0 +1,22 @@
+schema_version: 1
+name: mariadb
+description: MariaDB relational database
+default_version: "11.4"
+
+versions:
+  "10.11":
+    image: mariadb:10.11
+  "11.4":
+    image: mariadb:11.4
+  "11.8":
+    image: mariadb:11.8
+
+defaults:
+  ports:
+    - "3306:3306"
+  environment:
+    - "MARIADB_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD:?Set MARIADB_ROOT_PASSWORD}"
+    - "MARIADB_DATABASE=${MARIADB_DATABASE:-app}"
+  volumes:
+    - "mariadb_data:/var/lib/mysql"
+  restart: unless-stopped

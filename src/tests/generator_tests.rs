@@ -91,3 +91,70 @@ services:
 
     assert_eq!(yaml["services"]["redis"]["image"].as_str(), Some("redis:7"));
 }
+
+#[test]
+fn plans_additional_recipe_file() {
+    let config = spec(
+        r#"
+services:
+  - name: prometheus
+    image: prom/prometheus:latest
+    files:
+      path: prometheus/prometheus.yml
+      content: |
+        global:
+          scrape_interval: 15s
+"#,
+    );
+
+    let plan = build_generation_plan(&config, &[]).unwrap();
+
+    assert_eq!(plan.len(), 2);
+
+    let paths: Vec<_> = plan
+        .files()
+        .map(|file| file.relative_path.clone())
+        .collect();
+
+    assert!(paths.contains(&PathBuf::from("docker-compose.yaml")));
+    assert!(paths.contains(&PathBuf::from("prometheus/prometheus.yml")));
+
+    let generated = plan
+        .files()
+        .find(|file| file.relative_path == std::path::Path::new("prometheus/prometheus.yml"))
+        .unwrap();
+
+    assert!(generated.contents.contains("scrape_interval: 15s"));
+}
+
+#[test]
+fn rejects_unsafe_recipe_file_path() {
+    let config = spec(
+        r#"
+services:
+  - name: prometheus
+    image: prom/prometheus:latest
+    files:
+      path: ../unsafe.yml
+      content: "unsafe"
+"#,
+    );
+
+    assert!(build_generation_plan(&config, &[]).is_err());
+}
+
+#[test]
+fn rejects_recipe_file_conflicting_with_compose() {
+    let config = spec(
+        r#"
+services:
+  - name: prometheus
+    image: prom/prometheus:latest
+    files:
+      path: docker-compose.yaml
+      content: "conflict"
+"#,
+    );
+
+    assert!(build_generation_plan(&config, &[]).is_err());
+}

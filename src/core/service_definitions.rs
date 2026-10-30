@@ -1,3 +1,4 @@
+use crate::models::docker_compose_struct::File;
 use crate::models::docker_compose_struct::RecipeCompose;
 
 use serde::Deserialize;
@@ -36,6 +37,12 @@ pub struct ServiceDefaults {
     pub depends_on: Option<Vec<String>>,
     pub restart: Option<String>,
     pub command: Option<Vec<String>>,
+
+    #[serde(
+        default,
+        deserialize_with = "crate::models::docker_compose_struct::deserialize_recipe_files"
+    )]
+    pub files: Option<Vec<File>>,
 }
 
 fn invalid_data(message: impl Into<String>) -> io::Error {
@@ -126,7 +133,7 @@ impl ServiceDefinition {
             depends_on: self.defaults.depends_on.clone(),
             restart: self.defaults.restart.clone(),
             command: self.defaults.command.clone(),
-            files: None,
+            files: self.defaults.files.clone(),
             env: None,
             notes: None,
         })

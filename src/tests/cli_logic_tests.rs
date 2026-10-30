@@ -77,3 +77,108 @@ fn dry_run_force_preserves_existing_file() {
 
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn compile_generates_multiple_recipe_files() {
+    let dir = test_project();
+
+    fs::write(
+        dir.join("compile.yaml"),
+        r#"
+services:
+  - name: monitor
+    image: example/monitor:1
+    files:
+      - path: monitoring/config.yml
+        content: |
+          global:
+            scrape_interval: 15s
+      - path: monitoring/alerts.yml
+        content: |
+          groups: []
+"#,
+    )
+    .unwrap();
+
+    // Compose + two additional files.
+    assert_eq!(check_at(&dir.join("compile.yaml")).unwrap(), 3);
+
+    let preview = dry_run_at(&dir.join("compile.yaml"), &dir, false).unwrap();
+
+    assert_eq!(preview.len(), 3);
+    assert!(
+        preview
+            .iter()
+            .all(|file| { file.action == PlannedAction::Create })
+    );
+
+    // Dry-run must not write anything.
+    assert!(!dir.join("monitoring/config.yml").exists());
+
+    let written = compile_at_with_options(&dir.join("compile.yaml"), &dir, false).unwrap();
+
+    assert_eq!(written.len(), 3);
+    assert!(dir.join("docker-compose.yaml").exists());
+
+    assert!(
+        fs::read_to_string(dir.join("monitoring/config.yml"))
+            .unwrap()
+            .contains("scrape_interval: 15s")
+    );
+
+    assert!(
+        fs::read_to_string(dir.join("monitoring/alerts.yml"))
+            .unwrap()
+            .contains("groups: []")
+    );
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn compile_preserves_existing_recipe_file_without_force() {
+    let dir = test_project();
+
+    fs::write(
+        dir.join("compile.yaml"),
+        r#"
+services:
+  - name: monitor
+    image: example/monitor:1
+    files:
+      - path: monitoring/config.yml
+        content: "generated configuration"
+      - path: monitoring/alerts.yml
+        content: "generated alerts"
+"#,
+    )
+    .unwrap();
+
+    fs::create_dir_all(dir.join("monitoring")).unwrap();
+
+    let existing = dir.join("monitoring/config.yml");
+    fs::write(&existing, "USER CONTENT").unwrap();
+
+    let result = compile_at_with_options(&dir.join("compile.yaml"), &dir, false);
+
+    assert!(result.is_err());
+
+    // Existing user content must remain unchanged.
+    assert_eq!(fs::read_to_string(&existing).unwrap(), "USER CONTENT");
+
+    // Global preflight must prevent partial generation.
+    assert!(!dir.join("docker-compose.yaml").exists());
+    assert!(!dir.join("monitoring/alerts.yml").exists());
+
+    // Explicit force permits replacing the existing file.
+    let written = compile_at_with_options(&dir.join("compile.yaml"), &dir, true).unwrap();
+
+    assert_eq!(written.len(), 3);
+
+    assert_eq!(
+        fs::read_to_string(&existing).unwrap(),
+        "generated configuration"
+    );
+
+    fs::remove_dir_all(dir).unwrap();
+}

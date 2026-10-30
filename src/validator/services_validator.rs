@@ -73,13 +73,16 @@ pub fn validate_service(name: &str, service: &RecipeCompose, errors: &mut Vec<Va
         }
     }
     // Validate the generated file path when a file is configured.
-    if let Some(file) = &service.files
-        && file.path.trim().is_empty()
-    {
-        errors.push(ValidationError {
-            path: format!("{base}.files.path"),
-            message: "cannot be empty".to_string(),
-        });
+
+    if let Some(files) = &service.files {
+        for (index, file) in files.iter().enumerate() {
+            if file.path.trim().is_empty() {
+                errors.push(ValidationError {
+                    path: format!("{base}.files[{index}].path"),
+                    message: "cannot be empty".to_string(),
+                });
+            }
+        }
     }
 }
 
