@@ -1,26 +1,27 @@
-# DevInit: подробная документация
+# DevInit: Detailed Documentation
 
-Документ описывает фактическое состояние проекта `devinit_cli_2` по исходному коду. Он рассчитан на пользователя, который хочет запустить CLI, и на разработчика, которому нужно понять назначение каждого файла, функции и этапа обработки.
+This document describes the actual state of the `devinit_cli_2` project based on its source code. It is intended for users who want to run the CLI and developers who need to understand the purpose of each file, function, and processing stage.
 
-## 1. Назначение проекта
-DevInit — CLI на Rust для подготовки конфигурационных файлов из одного YAML-описания. Основной сценарий — команда `devinit compile`:
+## 1. Project Purpose
+
+DevInit is a Rust CLI for preparing configuration files from a single YAML description. The main workflow is the `devinit compile` command:
 
 ```text
 compile.yaml
-    -> проверка наличия и непустого содержимого
-    -> чтение UTF-8
-    -> десериализация YAML в CompileSpec
-    -> валидация сервисов, Kubernetes и CI/CD
-    -> проверка зависимостей между сервисами
-    -> генерация целевых YAML-файлов
-    -> атомарная запись результатов
+    -> check that the file exists and is not empty
+    -> read as UTF-8
+    -> deserialize YAML into CompileSpec
+    -> validate services, Kubernetes, and CI/CD
+    -> check dependencies between services
+    -> generate target YAML files
+    -> atomically write the results
 ```
 
-Генерация выполняется только после успешной десериализации и полной валидации. Проект не запускает Docker, Kubernetes или CI/CD: он только создаёт конфигурационные файлы.
+Generation is performed only after successful deserialization and complete validation. The project does not run Docker, Kubernetes, or CI/CD; it only creates configuration files.
 
-## 2. Быстрый запуск
+## 2. Quick Start
 
-Требуется установленный Rust и Cargo.
+Rust and Cargo must be installed.
 
 ```bash
 cargo build
@@ -28,243 +29,243 @@ cargo test
 cargo run -- compile
 ```
 
-`compile` всегда ищет файл `compile.yaml` в текущем рабочем каталоге. Для запуска уже собранного бинарного файла:
+`compile` always looks for `compile.yaml` in the current working directory. To run an already-built binary:
 
 ```bash
 ./target/debug/devinit_cli_2 compile
 ```
 
-Основные команды справки:
+Main help commands:
 
 ```bash
 cargo run -- --help
 cargo run -- compile --help
 ```
 
-## 3. Структура проекта
+## 3. Project Structure
 
 ```text
-Cargo.toml                         манифест пакета и зависимости
-README.md                          краткое описание проекта
-Instruction.md                     схема compile.yaml и примеры
-TODO.md                            реализованные возможности и план развития
-compile.yaml                       пример Compose + GitHub Actions
-compile12.yaml                     пример только со встроенными сервисами
-compile43.yaml                     пример Compose + Kubernetes + GitLab CI
-resources/services.yaml            справочный список сервисов
-src/lib.rs                         экспорт модулей библиотеки
-src/main.rs                        бинарная точка входа
-src/errors.rs                      типы ошибок
-src/api/                            HTTP-клиент
-src/cli/                            описание команд и маршрутизация CLI
-src/file_config/                   чтение и запись конфигурационных файлов
-src/generator/                     генерация целевых файлов
-src/models/                        структуры YAML-моделей
-src/validator/                     проверка моделей
- tests/project_tests.rs             интеграционные тесты
+Cargo.toml                         package manifest and dependencies
+README.md                          brief project description
+Instruction.md                     compile.yaml schema and examples
+TODO.md                            implemented features and development plan
+compile.yaml                       Compose + GitHub Actions example
+compile12.yaml                     built-in services only example
+compile43.yaml                     Compose + Kubernetes + GitLab CI example
+resources/services.yaml            reference service list
+src/lib.rs                         library module exports
+src/main.rs                        binary entry point
+src/errors.rs                      error types
+src/api/                            HTTP client
+src/cli/                            CLI command definitions and routing
+src/file_config/                   configuration file reading and writing
+src/generator/                     target file generation
+src/models/                        YAML data models
+src/validator/                     model validation
+ tests/project_tests.rs             integration tests
 ```
 
-## 4. Запуск приложения и CLI
+## 4. Application and CLI Execution
 
 ### `src/main.rs`
 
-Файл является точкой входа бинарного приложения.
+This file is the binary application's entry point.
 
-- `main()` — вызывает `cli::cli_logic::cli_logic()`. Если функция возвращает ошибку, завершает процесс с кодом `1`. Сам текст ошибки печатается внутри логики CLI для соответствующих сценариев.
+- `main()` calls `cli::cli_logic::cli_logic()`. If the function returns an error, the process exits with code `1`. The error text itself is printed inside the CLI logic for the relevant scenarios.
 
 ### `src/lib.rs`
 
-Файл превращает проект в библиотеку, которую используют интеграционные тесты, и экспортирует модули:
+This file turns the project into a library used by integration tests and exports these modules:
 
-- `api` — HTTP-запросы;
-- `cli` — построение команд и их выполнение;
-- `file_config` — файловые операции;
-- `models` — структуры данных;
-- `validator` — проверки;
-- `errors` — общие ошибки;
-- `generator` — генерация результатов.
+- `api` — HTTP requests;
+- `cli` — command construction and execution;
+- `file_config` — file operations;
+- `models` — data structures;
+- `validator` — validation;
+- `errors` — shared errors;
+- `generator` — result generation.
 
-Функций в этом файле нет.
+There are no functions in this file.
 
 ### `src/cli/commands.rs`
 
-Модуль собирает дерево команд с помощью `clap`.
+This module builds the command tree with `clap`.
 
-- `build_cli() -> Command` — создаёт корневую команду `devinit`, задаёт версию `0.0.2`, автора, описание, обязательность subcommand и подключает все подкоманды.
-- `build_add_cli() -> Command` — описывает `add <service>` с опциями `--port/-p` и `--version/-v`. Эти две опции разбираются, но пока не используются при запросе.
-- `build_list_cli() -> Command` — описывает `list` с опциями `--type/-t` и `--page/-p`.
-- `build_get_cli() -> Command` — описывает `get <service_url>`.
-- `build_license_cli() -> Command` — описывает `license <license_type>`.
-- `build_login_cli() -> Command` — описывает `login <login_url>`.
-- `build_compile_cli() -> Command` — описывает `compile` без аргументов.
-- `build_test_cli() -> Command` — описывает `test` с необязательным аргументом `tester`.
+- `build_cli() -> Command` creates the root `devinit` command, sets version `0.0.2`, author, description, and required subcommand, and registers all subcommands.
+- `build_add_cli() -> Command` describes `add <service>` with `--port/-p` and `--version/-v` options. These options are parsed but are not yet used in the request.
+- `build_list_cli() -> Command` describes `list` with `--type/-t` and `--page/-p` options.
+- `build_get_cli() -> Command` describes `get <service_url>`.
+- `build_license_cli() -> Command` describes `license <license_type>`.
+- `build_login_cli() -> Command` describes `login <login_url>`.
+- `build_compile_cli() -> Command` describes `compile` without arguments.
+- `build_test_cli() -> Command` describes `test` with an optional `tester` argument.
 
-Зарегистрированные команды имеют разную степень готовности:
+The registered commands have different levels of readiness:
 
-| Команда | Фактическое поведение |
+| Command | Actual behavior |
 | --- | --- |
-| `add service` | Запрашивает рецепт у локального API и дописывает Compose/env-примеры |
-| `get service_url` | Запрашивает список конфигураций и дописывает Compose-пример |
-| `compile` | Читает, валидирует и генерирует файлы |
-| `list` | Только печатает переданные фильтры |
-| `login` | Только печатает URL; API login не вызывается |
-| `license` | Зарегистрирована, отдельная обработка отсутствует |
-| `test` | Ветка обработки пустая |
+| `add service` | Requests a recipe from the local API and appends Compose/env examples |
+| `get service_url` | Requests a list of configurations and appends a Compose example |
+| `compile` | Reads, validates, and generates files |
+| `list` | Only prints the supplied filters |
+| `login` | Only prints the URL; the login API is not called |
+| `license` | Registered, but has no separate handling |
+| `test` | The handling branch is empty |
 
 ### `src/cli/cli_logic.rs`
 
-Это основной маршрутизатор команд и публичная точка программного pipeline.
+This is the main command router and the public entry point of the program pipeline.
 
-- `compile() -> Result<Vec<PathBuf>, DevinitError>` — запускает компиляцию стандартного файла `compile.yaml` в текущую директорию `.`. Это удобная обёртка над `compile_at`.
-- `compile_at(input_path, output_dir) -> Result<Vec<PathBuf>, DevinitError>` — загружает `CompileSpec` через `load_compile`, вызывает `validate_compile`, преобразует список ошибок в `DevinitError::ValidationErrors`, а после успешной проверки вызывает `generator::generate`.
-- `print_validation_errors(errors)` — приватно печатает в stderr все ошибки в формате «путь + сообщение».
-- `cli_logic() -> Result<(), DevinitError>` — получает аргументы из `clap`, выбирает подкоманду и выполняет её.
+- `compile() -> Result<Vec<PathBuf>, DevinitError>` compiles the standard `compile.yaml` file into the current directory `.`. It is a convenience wrapper around `compile_at`.
+- `compile_at(input_path, output_dir) -> Result<Vec<PathBuf>, DevinitError>` loads `CompileSpec` with `load_compile`, calls `validate_compile`, converts the error list into `DevinitError::ValidationErrors`, and, after successful validation, calls `generator::generate`.
+- `print_validation_errors(errors)` privately prints all errors to stderr in the format “path + message”.
+- `cli_logic() -> Result<(), DevinitError>` obtains arguments from `clap`, selects a subcommand, and executes it.
 
-Для `add` используются базовые URL:
+`add` uses these base URLs:
 
 ```text
 http://localhost:5167/services/
 http://localhost:5167/configs/
 ```
 
-`add` вызывает `add_recipe`, пишет рецепт в `compose.yaml.example` через `yaml_data` и переменные окружения в `env.example` через `env_file_config`. `get` вызывает `get_config` и добавляет полученные рецепты через `yaml_configs_data`. Ошибки этих операций печатаются, но внутри ветки команды не возвращаются как ошибка верхнего уровня.
+`add` calls `add_recipe`, writes the recipe to `compose.yaml.example` through `yaml_data`, and writes environment variables to `env.example` through `env_file_config`. `get` calls `get_config` and appends the returned recipes through `yaml_configs_data`. Errors from these operations are printed but are not returned as top-level errors from the command branch.
 
-## 5. Ошибки
+## 5. Errors
 
 ### `src/errors.rs`
 
-- `ValidationError` — небольшая структура с полями `path` и `message`. Представляет одну ошибку валидации и позволяет показать пользователю точное место проблемы.
-- `GenerationError` — ошибка этапа генерации. Включает `Io` для создания/записи/переименования файлов и `Serialization` для ошибки сериализации YAML.
-- `DevinitError` — общий enum приложения:
-  - `HttpRequestError` — ошибка `reqwest`;
-  - `JsonParseError` — ошибка десериализации JSON;
-  - `FileIOError` — ошибка файловой системы;
-  - `YamlParseError` — ошибка YAML;
-  - `ValidationErrors` — список структурированных ошибок валидации;
-  - `GenerationError` — ошибка генератора;
-  - `InvalidInput`, `ServiceNotFound`, `ConfigurationError` — ошибки входных данных, сервиса и конфигурации;
-  - `K8sValidationError`, `CiCdGenerationError`, `EnvConfigError`, `StorageError`, `ServiceGenerationError`, `Other` — расширения для будущих и отдельных подсистем. Не все варианты используются в текущем runtime-пути.
+- `ValidationError` is a small structure with `path` and `message` fields. It represents one validation error and allows the user to see the exact location of the problem.
+- `GenerationError` represents a generation-stage error. It includes `Io` for file creation/writing/renaming and `Serialization` for YAML serialization errors.
+- `DevinitError` is the application's general enum:
+  - `HttpRequestError` — a `reqwest` error;
+  - `JsonParseError` — a JSON deserialization error;
+  - `FileIOError` — a filesystem error;
+  - `YamlParseError` — a YAML error;
+  - `ValidationErrors` — a list of structured validation errors;
+  - `GenerationError` — a generator error;
+  - `InvalidInput`, `ServiceNotFound`, `ConfigurationError` — input, service, and configuration errors;
+  - `K8sValidationError`, `CiCdGenerationError`, `EnvConfigError`, `StorageError`, `ServiceGenerationError`, `Other` — extensions for future and separate subsystems. Not all variants are used in the current runtime path.
 
 ## 6. HTTP API
 
-API-модули используют синхронный `reqwest::blocking::Client`. Каждый запрос проверяет HTTP-статус через `error_for_status()` и затем десериализует JSON.
+The API modules use a synchronous `reqwest::blocking::Client`. Each request checks the HTTP status with `error_for_status()` and then deserializes JSON.
 
 ### `src/api/add_recipe.rs`
 
-- `add_recipe(recipe_name, base_url) -> Result<RecipeCompose, Box<dyn Error>>` — объединяет `base_url` и имя рецепта, выполняет GET с заголовком `Accept: application/json`, получает один `RecipeCompose` и возвращает его вызывающему коду.
+- `add_recipe(recipe_name, base_url) -> Result<RecipeCompose, Box<dyn Error>>` joins `base_url` and the recipe name, performs a GET request with the `Accept: application/json` header, receives one `RecipeCompose`, and returns it to the caller.
 
 ### `src/api/get_config.rs`
 
-- `get_config(config_url, config_name) -> Result<ConfigsList, Box<dyn Error>>` — выполняет GET по объединённому URL и получает объект `ConfigsList`, содержащий список рецептов.
+- `get_config(config_url, config_name) -> Result<ConfigsList, Box<dyn Error>>` performs a GET request to the combined URL and receives a `ConfigsList` object containing a list of recipes.
 
 ### `src/api/login.rs`
 
-- `login(company_url) -> Result<bool, Box<dyn Error>>` — выполняет POST, проверяет статус и ожидает JSON boolean. Функция реализована, но текущая CLI-ветка `login` её не вызывает.
+- `login(company_url) -> Result<bool, Box<dyn Error>>` performs a POST request, checks the status, and expects a JSON boolean. The function is implemented, but the current `login` CLI branch does not call it.
 
-## 7. Чтение и запись файлов
+## 7. Reading and Writing Files
 
 ### `src/file_config/yaml_config.rs`
 
-- `load_compile(path) -> Result<CompileSpec, DevinitError>` — проверяет существование входного файла, вызывает `ensure_file_not_empty`, читает строку UTF-8 и десериализует её через `serde_yaml`.
-- `yaml_data(config_struct, path) -> io::Result<()>` — передаёт один `RecipeCompose` во внутреннюю функцию добавления рецептов.
-- `yaml_configs_data(configs_list, path) -> io::Result<()>` — передаёт в неё все рецепты из `ConfigsList`.
-- `append_recipes(recipes, path) -> io::Result<()>` — приватная общая реализация: пропускает пустой список, запрещает повторяющиеся Docker images, открывает файл в append-режиме, добавляет разделитель, удаляет поле `env` из Compose-части и сериализует каждый рецепт под ключом его имени.
+- `load_compile(path) -> Result<CompileSpec, DevinitError>` checks that the input file exists, calls `ensure_file_not_empty`, reads it as a UTF-8 string, and deserializes it with `serde_yaml`.
+- `yaml_data(config_struct, path) -> io::Result<()>` passes one `RecipeCompose` to the internal recipe-appending function.
+- `yaml_configs_data(configs_list, path) -> io::Result<()>` passes all recipes from `ConfigsList` to it.
+- `append_recipes(recipes, path) -> io::Result<()>` is the shared private implementation: it skips an empty list, rejects duplicate Docker images, opens the file in append mode, adds a separator, removes the `env` field from the Compose section, and serializes each recipe under its name.
 
-Эти функции используются командами `add` и `get`, а не основным `compile`-генератором.
+These functions are used by the `add` and `get` commands, not by the main `compile` generator.
 
 ### `src/file_config/file_validator.rs`
 
-- `ensure_file_not_empty(path)` — читает файл и возвращает `InvalidData`, если после удаления пробелов он пуст.
-- `ensure_images_are_new(path, recipes)` — собирает images из существующего YAML и проверяет одновременно отсутствие повторов в файле и дублей внутри новой партии.
-- `ensure_name_is_new(path, name)` — проверяет комментарии вида `# devinit config: <name>` в env-файле и запрещает повторное имя.
-- `read_existing_images(path)` — приватно возвращает множество images существующих Compose-рецептов; для отсутствующего или пустого файла возвращает пустое множество.
-- `read_existing_names(path)` — приватно читает строки env-файла и возвращает имена из специальных комментариев.
+- `ensure_file_not_empty(path)` reads the file and returns `InvalidData` if it is empty after whitespace is removed.
+- `ensure_images_are_new(path, recipes)` collects images from existing YAML and checks both for duplicates in the file and duplicates within the new batch.
+- `ensure_name_is_new(path, name)` checks comments in the form `# devinit config: <name>` in the env file and rejects a duplicate name.
+- `read_existing_images(path)` privately returns the set of images from existing Compose recipes; for a missing or empty file it returns an empty set.
+- `read_existing_names(path)` privately reads env-file lines and returns names from the special comments.
 
 ### `src/file_config/yaml_writer.rs`
 
-- `write_yaml<T: Serialize>(value, path) -> Result<PathBuf, GenerationError>` — создаёт родительские директории, сериализует значение в YAML, пишет результат во временный файл с расширением `.tmp`, затем переименовывает его в целевой путь. Возвращает путь результата. Такой порядок уменьшает риск оставить частично записанный YAML.
+- `write_yaml<T: Serialize>(value, path) -> Result<PathBuf, GenerationError>` creates parent directories, serializes the value to YAML, writes the result to a temporary file with a `.tmp` extension, and then renames it to the target path. It returns the result path. This order reduces the risk of leaving partially written YAML.
 
 ### `src/file_config/env_config.rs`
 
-- `env_file_config(recipe, path) -> io::Result<()>` — если `recipe.env` отсутствует или пуст, ничего не делает. Иначе проверяет уникальность имени, открывает файл в append-режиме, добавляет комментарий `# devinit config: ...` и записывает каждую env-строку.
+- `env_file_config(recipe, path) -> io::Result<()>` does nothing if `recipe.env` is absent or empty. Otherwise, it checks name uniqueness, opens the file in append mode, adds the `# devinit config: ...` comment, and writes each environment line.
 
-## 8. Модели входных данных
+## 8. Input Data Models
 
 ### `src/models/compile_struct.rs`
 
-- `CompileSpec` — корень `compile.yaml`: `services`, `kubernetes` и `cicd`.
-- `CompileService` — untagged enum. Строка YAML разбирается как `BuiltIn(Services)`, объект — как `Custom(Box<RecipeCompose>)`.
-- `CompileService::to_recipe()` — приводит оба варианта к единому `RecipeCompose`: встроенный сервис вызывает `Services::to_recipe`, пользовательский клонируется.
+- `CompileSpec` is the root of `compile.yaml`: `services`, `kubernetes`, and `cicd`.
+- `CompileService` is an untagged enum. A YAML string is parsed as `BuiltIn(Services)`, while an object is parsed as `Custom(Box<RecipeCompose>)`.
+- `CompileService::to_recipe()` converts both variants into a single `RecipeCompose`: a built-in service calls `Services::to_recipe`, while a custom service is cloned.
 
 ### `src/models/docker_compose_struct.rs`
 
-- `RecipeCompose` — описание сервиса: `name`, `description`, `image`, `ports`, `environment`, `volumes`, `networks`, `depends_on`, `restart`, `command`, `files`, `env`, `notes`.
-- `ConfigsList` — обёртка с полем `configs: Vec<RecipeCompose>` для API.
-- `File` — вложенный файл с `path` и `content`.
+- `RecipeCompose` describes a service: `name`, `description`, `image`, `ports`, `environment`, `volumes`, `networks`, `depends_on`, `restart`, `command`, `files`, `env`, and `notes`.
+- `ConfigsList` is a wrapper with a `configs: Vec<RecipeCompose>` field for the API.
+- `File` is a nested file with `path` and `content`.
 
-Поля `files`, `env` и `notes` хранятся моделью, но в основном Docker Compose генераторе не выводятся. `env` используется отдельным `env_file_config` при импорте рецепта.
+The `files`, `env`, and `notes` fields are stored by the model but are not emitted by the main Docker Compose generator. `env` is used separately by `env_file_config` when importing a recipe.
 
 ### `src/models/services_struct.rs`
 
-`Services` содержит встроенные значения `postgresql`, `mysql`, `mongodb`, `mariadb`, `elasticsearch`, `prometheus`, `grafana`, `redis`, `rabbitmq`, `kafka`, `s3`, `ec2`.
+`Services` contains the built-in values `postgresql`, `mysql`, `mongodb`, `mariadb`, `elasticsearch`, `prometheus`, `grafana`, `redis`, `rabbitmq`, `kafka`, `s3`, and `ec2`.
 
-- `Services::to_recipe()` — создаёт стандартный рецепт с именем, описанием, image, портами и политикой `unless-stopped`. Для S3 добавляет команду `server /data`.
-- `services_selector(services)` — вызывает один из специализированных placeholder-validator-ов для части сервисов и печатает сообщение. Всегда возвращает `Ok(())`; результат валидатора сейчас не анализируется.
+- `Services::to_recipe()` creates a standard recipe with a name, description, image, ports, and the `unless-stopped` policy. For S3 it adds the `server /data` command.
+- `services_selector(services)` calls one of the specialized placeholder validators for some services and prints a message. It always returns `Ok(())`; the validator result is currently not analyzed.
 
-Значения в `to_recipe` захардкожены. `resources/services.yaml` является справочным файлом и в текущем коде не загружается.
+The values in `to_recipe` are hard-coded. `resources/services.yaml` is a reference file and is not loaded by the current code.
 
 ### `src/models/env_struct.rs`
 
-- `Env` — пустая структура-заготовка. Полей и методов нет.
+- `Env` is an empty placeholder structure. It has no fields or methods.
 
 ### `src/models/cicd_struct.rs`
 
-- `Pipeline` — CI/CD-конфигурация: `provider`, список `triggers` и список `jobs`.
-- `CiProvider` — `Github` или `Gitlab`.
-- `Trigger` — `Push { branches }`, `PullRequest { branches }` или `Manual`.
-- `Job` — имя, runner, зависимости `needs` и шаги.
-- `Runner` — `UbuntuLatest`, `WindowsLatest`, `MacosLatest`; значение по умолчанию — Ubuntu.
-- `Step` — имя шага, действие `StepAction` и map переменных `env`.
-- `StepAction` — `Checkout`, `Run { command }`, `DockerBuild { dockerfile, image }`, `DockerPush { image }`.
+- `Pipeline` is a CI/CD configuration with a `provider`, a list of `triggers`, and a list of `jobs`.
+- `CiProvider` is either `Github` or `Gitlab`.
+- `Trigger` is `Push { branches }`, `PullRequest { branches }`, or `Manual`.
+- `Job` has a name, runner, `needs` dependencies, and steps.
+- `Runner` is `UbuntuLatest`, `WindowsLatest`, or `MacosLatest`; the default is Ubuntu.
+- `Step` has a step name, a `StepAction`, and an environment variable map.
+- `StepAction` is `Checkout`, `Run { command }`, `DockerBuild { dockerfile, image }`, or `DockerPush { image }`.
 
-Serde использует snake_case для входных enum-значений, например `provider: github` и `action: docker_build`.
+Serde uses snake_case for input enum values, such as `provider: github` and `action: docker_build`.
 
 ### `src/models/k8s_struct.rs`
 
-Файл содержит типизированную модель Kubernetes Deployment и не содержит функций. Основные структуры:
+This file contains a typed Kubernetes Deployment model and no functions. The main structures are:
 
 - `Deployment` — `api_version`, `kind`, `metadata`, `spec`;
-- `ObjectMeta` — имя, namespace, labels, annotations;
-- `DeploymentSpec` — replicas, selector, template и параметры rollout;
-- `DeploymentStrategy`, `RollingUpdate` — стратегия и ограничения обновления;
-- `LabelSelector`, `PodTemplateSpec`, `PodSpec` — selector, шаблон Pod и настройки Pod;
-- `Container`, `ContainerPort` — контейнер, image, команды, порты, env, probes, ресурсы и mounts;
-- `EnvVar`, `EnvVarSource`, `KeySelector`, `ObjectFieldSelector` — переменные и источники значений;
-- `EnvFromSource`, `ConfigMapEnvSource`, `SecretEnvSource` — массовый импорт env;
-- `ResourceRequirements` — requests и limits;
-- `VolumeMount`, `Volume` — подключение томов;
-- `EmptyDirVolumeSource`, `ConfigMapVolumeSource`, `SecretVolumeSource`, `PersistentVolumeClaimVolumeSource`, `HostPathVolumeSource` — пять вариантов источника тома;
-- `Probe`, `HttpGetAction`, `TcpSocketAction`, `ExecAction`, `GrpcAction` — проверки состояния;
-- `SecurityContext`, `PodSecurityContext` — параметры безопасности;
-- `LocalObjectReference` — ссылка на объект Kubernetes.
+- `ObjectMeta` — name, namespace, labels, annotations;
+- `DeploymentSpec` — replicas, selector, template, and rollout parameters;
+- `DeploymentStrategy`, `RollingUpdate` — strategy and update constraints;
+- `LabelSelector`, `PodTemplateSpec`, `PodSpec` — selector, Pod template, and Pod settings;
+- `Container`, `ContainerPort` — container, image, commands, ports, env, probes, resources, and mounts;
+- `EnvVar`, `EnvVarSource`, `KeySelector`, `ObjectFieldSelector` — variables and value sources;
+- `EnvFromSource`, `ConfigMapEnvSource`, `SecretEnvSource` — bulk environment imports;
+- `ResourceRequirements` — requests and limits;
+- `VolumeMount`, `Volume` — volume attachments;
+- `EmptyDirVolumeSource`, `ConfigMapVolumeSource`, `SecretVolumeSource`, `PersistentVolumeClaimVolumeSource`, `HostPathVolumeSource` — five volume-source variants;
+- `Probe`, `HttpGetAction`, `TcpSocketAction`, `ExecAction`, `GrpcAction` — health checks;
+- `SecurityContext`, `PodSecurityContext` — security settings;
+- `LocalObjectReference` — a reference to a Kubernetes object.
 
-Большинство структур используют `camelCase` при сериализации (`apiVersion`, `imagePullPolicy`, `containerPort` и т. п.). Неуказанные optional-поля пропускаются благодаря `skip_serializing_if`.
+Most structures use `camelCase` during serialization (`apiVersion`, `imagePullPolicy`, `containerPort`, and so on). Unspecified optional fields are omitted through `skip_serializing_if`.
 
-## 9. Валидация
+## 9. Validation
 
 ### `src/validator/compile_validator.rs`
 
-- `validate_compile(spec) -> Result<(), Vec<ValidationError>>` — общий валидатор. Приводит каждый сервис к `RecipeCompose`, запускает проверку сервисов, Kubernetes и CI/CD, затем проверяет межсервисные ссылки и циклы. Возвращает все найденные ошибки сразу.
-- `validate_cross_references(spec, errors)` — приватно проверяет дубли имён и существование каждого `depends_on`.
-- `detect_cycles(spec, services, errors)` — запускает обход зависимостей для каждого сервиса.
-- `visit_service(...) -> bool` — DFS-обход графа. Множество `visiting` обнаруживает обратное ребро, `visited` не даёт повторно обходить уже проверенные узлы.
+- `validate_compile(spec) -> Result<(), Vec<ValidationError>>` is the general validator. It converts each service to a `RecipeCompose`, validates services, Kubernetes, and CI/CD, and then checks cross-service references and cycles. It returns all detected errors at once.
+- `validate_cross_references(spec, errors)` privately checks duplicate names and the existence of every `depends_on` reference.
+- `detect_cycles(spec, services, errors)` starts a dependency traversal for every service.
+- `visit_service(...) -> bool` performs a DFS traversal. The `visiting` set detects a back edge, while `visited` prevents already processed nodes from being traversed again.
 
 ### `src/validator/services_validator.rs`
 
-- `validate_service(name, service, errors)` — проверяет имя, image, порты, environment, volumes, networks, `depends_on` и `files.path`.
-- `validate_port(value, path, errors)` — приватно берёт часть после последнего `:`, разбирает её как `u16` и требует значение больше нуля.
+- `validate_service(name, service, errors)` checks the name, image, ports, environment, volumes, networks, `depends_on`, and `files.path`.
+- `validate_port(value, path, errors)` privately takes the part after the last `:`, parses it as a `u16`, and requires a value greater than zero.
 
-Специализированные функции ниже публичны, но пока являются заглушками и всегда возвращают `true`:
+The following specialized functions are public but currently act as stubs and always return `true`:
 
 - `validate_postgresql_service()`;
 - `validate_mysql_service()`;
@@ -281,50 +282,50 @@ Serde использует snake_case для входных enum-значени�
 
 ### `src/validator/k8s_validator.rs`
 
-- `validate_deployment(deployment, errors)` — проверяет имя Deployment, `apiVersion`, `kind`, положительное число replicas, наличие контейнеров, имя/image контейнеров, ненулевые container ports, корректность env, взаимоисключение `value` и `valueFrom`, имена volume mounts, mount paths, имена volume и наличие ровно одного источника volume.
-- `validate_name(name, path, errors)` — приватно запрещает пустое имя.
+- `validate_deployment(deployment, errors)` checks the Deployment name, `apiVersion`, `kind`, a positive replica count, the presence of containers, container names/images, non-zero container ports, valid environment variables, mutual exclusion of `value` and `valueFrom`, volume-mount names, mount paths, volume names, and exactly one volume source.
+- `validate_name(name, path, errors)` privately rejects an empty name.
 
-Валидатор не проверяет полный Kubernetes schema contract: например, согласованность selector с labels и корректность всех числовых параметров остаются за пределами текущей реализации.
+The validator does not check the complete Kubernetes schema contract. For example, selector/label consistency and the correctness of all numeric parameters remain outside the current implementation.
 
 ### `src/validator/cicd_validator.rs`
 
-- `validate_pipeline(cicd, errors)` — проверяет непустые и уникальные имена job, непустые имена шагов, непустые команды `run` и существование всех имён в `needs`.
-- `cicd_validator(cicd) -> io::Result<()>` — адаптер старого интерфейса: запускает основную проверку и при ошибках возвращает один `std::io::Error` с количеством проблем.
+- `validate_pipeline(cicd, errors)` checks non-empty and unique job names, non-empty step names, non-empty `run` commands, and the existence of all names in `needs`.
+- `cicd_validator(cicd) -> io::Result<()>` is an adapter for the old interface: it runs the main validation and returns one `std::io::Error` containing the number of problems if errors are found.
 
-## 10. Генераторы
+## 10. Generators
 
 ### `src/generator.rs`
 
-- `generate(spec, output_dir) -> Result<Vec<PathBuf>, GenerationError>` — последовательно генерирует Compose, Kubernetes и CI/CD только для непустых/заданных частей `CompileSpec`. Возвращает список созданных путей.
+- `generate(spec, output_dir) -> Result<Vec<PathBuf>, GenerationError>` sequentially generates Compose, Kubernetes, and CI/CD files only for non-empty or specified parts of `CompileSpec`. It returns the list of created paths.
 
 ### `src/generator/docker_compose_generator.rs`
 
-- `generate_docker_compose(services, output_dir)` — преобразует все `CompileService` в рецепты, складывает их в `BTreeMap` по имени, строит Compose-модель и пишет `docker-compose.yaml`.
-- `ComposeService::from_recipe(recipe)` — приватный конструктор, копирует поддерживаемые Compose-поля и преобразует `description` в label `com.devinit.description`.
-- `DockerComposeFile` — внутренний корневой объект с map `services`.
-- `ComposeService` — внутреннее представление. Сериализуются image, ports, environment, volumes, networks, depends_on, restart, command и labels. Поля `files`, `env`, `notes` не попадают в Compose.
+- `generate_docker_compose(services, output_dir)` converts all `CompileService` values into recipes, stores them in a `BTreeMap` by name, builds the Compose model, and writes `docker-compose.yaml`.
+- `ComposeService::from_recipe(recipe)` is a private constructor that copies supported Compose fields and converts `description` into the `com.devinit.description` label.
+- `DockerComposeFile` is the internal root object with a `services` map.
+- `ComposeService` is the internal representation. It serializes image, ports, environment, volumes, networks, depends_on, restart, command, and labels. The `files`, `env`, and `notes` fields are not included in Compose.
 
 ### `src/generator/k8s_generator.rs`
 
-- `generate_k8s(deployment, output_dir)` — формирует путь `<output_dir>/k8s/<metadata.name>-deployment.yaml`, передаёт Deployment в общий `write_yaml` и возвращает путь в однолючевом `Vec`.
+- `generate_k8s(deployment, output_dir)` creates `<output_dir>/k8s/<metadata.name>-deployment.yaml`, passes the Deployment to the shared `write_yaml`, and returns the path in a one-element `Vec`.
 
 ### `src/generator/cicd_generator.rs`
 
-- `generate_cicd(pipeline, output_dir)` — выбирает GitHub Actions или GitLab CI по `CiProvider`.
-- `generate_github_actions(pipeline, output_dir)` — приватно строит `GithubWorkflow` и пишет `.github/workflows/devinit.yml`.
-- `generate_gitlab_ci(pipeline, output_dir)` — приватно строит `GitlabPipeline` и пишет `.gitlab-ci.yml`.
-- `GithubWorkflow::from_pipeline(pipeline)` — преобразует triggers и jobs во внутреннюю GitHub-модель.
-- `github_trigger(branches)` — создаёт trigger с branches или пустой trigger, если список веток пуст.
-- `runner_name(runner)` — преобразует runner в `ubuntu-latest`, `windows-latest` или `macos-latest`.
-- `github_step(step)` — преобразует checkout в `actions/checkout@v4`, run в shell-команду, Docker build/push в соответствующие команды и переносит env.
-- `GitlabPipeline::from_pipeline(pipeline)` — строит stages по именам job и map GitLab job-ов.
-- `gitlab_command(step)` — преобразует run/build/push в script-команду; checkout в GitLab игнорируется и возвращает `None`.
+- `generate_cicd(pipeline, output_dir)` selects GitHub Actions or GitLab CI based on `CiProvider`.
+- `generate_github_actions(pipeline, output_dir)` privately builds `GithubWorkflow` and writes `.github/workflows/devinit.yml`.
+- `generate_gitlab_ci(pipeline, output_dir)` privately builds `GitlabPipeline` and writes `.gitlab-ci.yml`.
+- `GithubWorkflow::from_pipeline(pipeline)` converts triggers and jobs into an internal GitHub model.
+- `github_trigger(branches)` creates a trigger with branches, or an empty trigger if the branch list is empty.
+- `runner_name(runner)` converts a runner to `ubuntu-latest`, `windows-latest`, or `macos-latest`.
+- `github_step(step)` converts checkout to `actions/checkout@v4`, run to a shell command, Docker build/push to the corresponding commands, and carries over the environment.
+- `GitlabPipeline::from_pipeline(pipeline)` builds stages from job names and a map of GitLab jobs.
+- `gitlab_command(step)` converts run/build/push to a script command; checkout is ignored in GitLab and returns `None`.
 
-GitHub результат содержит `name: DevInit`, `on` и `jobs`. В GitLab каждая job получает stage с тем же именем, а `needs` переносится напрямую.
+The GitHub result contains `name: DevInit`, `on`, and `jobs`. In GitLab, each job receives a stage with the same name, and `needs` is copied directly.
 
-## 11. Формат `compile.yaml`
+## 11. `compile.yaml` Format
 
-Минимальная верхнеуровневая форма:
+Minimal top-level form:
 
 ```yaml
 services: []
@@ -332,7 +333,7 @@ kubernetes: null
 cicd: null
 ```
 
-### Встроенные сервисы
+### Built-in Services
 
 ```yaml
 services:
@@ -340,9 +341,9 @@ services:
   - redis
 ```
 
-Поддерживаемые имена: `postgresql`, `mysql`, `mongodb`, `mariadb`, `elasticsearch`, `prometheus`, `grafana`, `redis`, `rabbitmq`, `kafka`, `s3`, `ec2`.
+Supported names: `postgresql`, `mysql`, `mongodb`, `mariadb`, `elasticsearch`, `prometheus`, `grafana`, `redis`, `rabbitmq`, `kafka`, `s3`, `ec2`.
 
-### Пользовательский сервис
+### Custom Service
 
 ```yaml
 services:
@@ -358,7 +359,7 @@ services:
     restart: unless-stopped
 ```
 
-Обязательны непустые `name` и `image`. Порты должны заканчиваться числовым значением больше нуля, environment — содержать `KEY=VALUE`, а зависимости должны ссылаться на существующие сервисы и не образовывать цикл.
+Non-empty `name` and `image` are required. Ports must end in a numeric value greater than zero, environment entries must contain `KEY=VALUE`, and dependencies must reference existing services without forming a cycle.
 
 ### Kubernetes
 
@@ -382,7 +383,7 @@ kubernetes:
             image: ghcr.io/example/backend:1.0.0
 ```
 
-Минимально проверяются непустые `apiVersion`, `kind`, `metadata.name`, положительные `replicas`, один или более контейнеров и непустые имя/image контейнера.
+The minimum checks cover non-empty `apiVersion`, `kind`, and `metadata.name`, positive `replicas`, one or more containers, and non-empty container name/image.
 
 ### CI/CD
 
@@ -403,11 +404,11 @@ cicd:
           command: cargo build --locked
 ```
 
-Допустимы провайдеры `github` и `gitlab`, runner-ы `ubuntu-latest`, `windows-latest`, `macos-latest`, действия `checkout`, `run`, `docker_build`, `docker_push`.
+Allowed providers are `github` and `gitlab`; allowed runners are `ubuntu-latest`, `windows-latest`, and `macos-latest`; allowed actions are `checkout`, `run`, `docker_build`, and `docker_push`.
 
-## 12. Результаты генерации
+## 12. Generated Results
 
-Для такой конфигурации:
+For this configuration:
 
 ```yaml
 services:
@@ -416,82 +417,82 @@ kubernetes: null
 cicd: null
 ```
 
-создаётся:
+The following file is created:
 
 ```text
 docker-compose.yaml
 ```
 
-Если задан Kubernetes Deployment с именем `backend`, добавляется `k8s/backend-deployment.yaml`. Для GitHub добавляется `.github/workflows/devinit.yml`, для GitLab — `.gitlab-ci.yml`.
+If a Kubernetes Deployment named `backend` is specified, `k8s/backend-deployment.yaml` is added. For GitHub, `.github/workflows/devinit.yml` is added; for GitLab, `.gitlab-ci.yml` is added.
 
-Повторная генерация заменяет файл через временный `.tmp` и не создаёт второй результат с тем же именем.
+Repeated generation replaces the file through a temporary `.tmp` file and does not create a second result with the same name.
 
-## 13. Тесты
+## 13. Tests
 
 ### `tests/project_tests.rs`
 
-Вспомогательные функции:
+Helper functions:
 
-- `temp_paths(name)` — создаёт уникальные временные пути для `compile.yaml` и output;
-- `valid_yaml()` — возвращает минимальный валидный YAML;
-- `deployment()` — создаёт валидную тестовую Kubernetes-модель;
-- `service(name, image, depends_on)` — создаёт базовый Compose-рецепт.
+- `temp_paths(name)` creates unique temporary paths for `compile.yaml` and the output;
+- `valid_yaml()` returns minimal valid YAML;
+- `deployment()` creates a valid Kubernetes test model;
+- `service(name, image, depends_on)` creates a basic Compose recipe.
 
-Тесты покрывают успешную компиляцию, отсутствие генерации при ошибке, malformed YAML, отсутствующий и пустой файл, повторную генерацию, одновременную генерацию трёх целей, структуру GitHub/GitLab, Compose labels, Kubernetes YAML, отсутствующую CI-зависимость, пустой image, неправильный порт, отсутствующую/циклическую зависимость и пустой image контейнера.
+The tests cover successful compilation, no generation after an error, malformed YAML, missing and empty files, repeated generation, simultaneous generation of all three targets, GitHub/GitLab structure, Compose labels, Kubernetes YAML, a missing CI dependency, an empty image, an invalid port, a missing/cyclic dependency, and an empty container image.
 
-Запуск:
+Run:
 
 ```bash
 cargo test
 ```
 
-## 14. Остальные файлы и зависимости
+## 14. Other Files and Dependencies
 
 ### `Cargo.toml`
 
-Пакет использует edition 2024. Основные зависимости:
+The package uses edition 2024. Main dependencies:
 
 - `clap` — CLI;
-- `serde`, `serde_json` — сериализация и JSON;
-- `yaml_serde` под именем `serde_yaml` — YAML;
+- `serde`, `serde_json` — serialization and JSON;
+- `yaml_serde` under the `serde_yaml` name — YAML;
 - `reqwest` — HTTP;
-- `thiserror` — enum-ошибки;
-- `ureq`, `inquire`, `dotenvy` — объявлены, но текущий просмотренный runtime-код их не использует.
+- `thiserror` — error enums;
+- `ureq`, `inquire`, `dotenvy` — declared but not used by the current reviewed runtime code.
 
 ### `resources/services.yaml`
 
-Справочный YAML со списком встроенных сервисов, image, описанием, портами и командой S3. Сейчас не загружается программой: фактический источник значений — match в `Services::to_recipe()`.
+A reference YAML containing built-in services, images, descriptions, ports, and the S3 command. It is not currently loaded by the program: the actual source of values is the match expression in `Services::to_recipe()`.
 
 ### `README.md`
 
-Краткое концептуальное описание целей проекта. Для точной схемы и текущего поведения следует использовать этот документ и `Instruction.md`.
+A brief conceptual description of the project's goals. For the exact schema and current behavior, use this document and `Instruction.md`.
 
 ### `Instruction.md`
 
-Пользовательская инструкция по `compile.yaml`, команде `compile`, сервисам, Kubernetes и CI/CD. Содержит примеры и ограничения формата.
+User instructions for `compile.yaml`, the `compile` command, services, Kubernetes, and CI/CD. It contains format examples and limitations.
 
 ### `TODO.md`
 
-План развития: dry-run/check, force/no-clobber, JSON-ошибки, Dockerfile и Compose-проверки, Kubernetes Service/probes/resources, профили окружений, registry login, cache и расширенная тестовая матрица.
+Development plan: dry-run/check, force/no-clobber, JSON errors, Dockerfile and Compose checks, Kubernetes Service/probes/resources, environment profiles, registry login, cache, and an expanded test matrix.
 
 ### `compile.yaml`, `compile12.yaml`, `compile43.yaml`
 
-Примеры входных данных:
+Input examples:
 
-- `compile.yaml` — PostgreSQL, Redis, пользовательский API и GitHub Actions;
-- `compile12.yaml` — пример со встроенными сервисами;
-- `compile43.yaml` — Compose, Kubernetes Deployment и GitLab CI с `needs`.
+- `compile.yaml` — PostgreSQL, Redis, a custom API, and GitHub Actions;
+- `compile12.yaml` — an example with built-in services;
+- `compile43.yaml` — Compose, a Kubernetes Deployment, and GitLab CI with `needs`.
 
-## 15. Известные ограничения
+## 15. Known Limitations
 
-1. `list`, `license`, `test` и фактическая авторизация `login` пока не реализованы полностью.
-2. `add` и `get` используют жёстко заданные URL `localhost:5167`.
-3. Параметры `--port` и `--version` команды `add` не влияют на запрос.
-4. Специализированные проверки встроенных сервисов возвращают `true` без проверки.
-5. `resources/services.yaml` не является runtime-конфигурацией.
-6. Поля `files` и `notes` не генерируются в Compose-файл.
-7. Полная схема Kubernetes, согласованность labels/selectors, коллизии host ports и Dockerfile не проверяются.
-8. Генератор перезаписывает существующие целевые файлы.
-9. Значения env импортируемых рецептов записываются в `env.example`, но отдельная маскировка секретов не реализована.
+1. `list`, `license`, `test`, and actual `login` authorization are not fully implemented yet.
+2. `add` and `get` use hard-coded `localhost:5167` URLs.
+3. The `add` command's `--port` and `--version` parameters do not affect the request.
+4. Specialized checks for built-in services return `true` without validation.
+5. `resources/services.yaml` is not runtime configuration.
+6. The `files` and `notes` fields are not generated in the Compose file.
+7. The full Kubernetes schema, label/selector consistency, host-port collisions, and Dockerfiles are not checked.
+8. The generator overwrites existing target files.
+9. Environment values imported from recipes are written to `env.example`, but separate secret masking is not implemented.
 
-Эти пункты отражены в `TODO.md` и должны учитываться при расширении проекта.
+These items are reflected in `TODO.md` and should be considered when extending the project.
