@@ -133,12 +133,11 @@ pub fn resolve_document(document: &mut Value, project_root: &Path) -> Result<(),
     Ok(())
 }
 
-/// Resolves a service using the installed YAML registry,
-/// legacy built-in definitions, or the local recipe cache.
+/// Resolves a service from the installed YAML registry
+/// or the local recipe cache.
 ///
-/// Installed YAML definitions take priority over cached recipes.
-/// Legacy built-in definitions are used only during migration.
-/// Unknown services may be resolved from the local cache.
+/// Installed YAML definitions always take priority.
+/// Cached recipes are used only for unknown services.
 pub fn resolve_recipe(
     project_root: &Path,
     name: &str,
@@ -146,35 +145,14 @@ pub fn resolve_recipe(
 ) -> Result<RecipeCompose, DevinitError> {
     let name = name.trim().to_ascii_lowercase();
 
-    // 1. Installed YAML definitions are authoritative.
-    //
-    // A cached recipe must never silently override an
-    // installed built-in service definition.
+    // 1. Installed YAML registry is authoritative.
     if let Some(recipe) = service_registry::packaged_recipe_version(&name, version)
         .map_err(DevinitError::FileIOError)?
     {
         return Ok(recipe);
     }
 
-    // 2. Legacy built-in definitions remain available
-    // during the YAML registry migration.
-    //
-    // These will be removed after all built-in services
-    // have been migrated to external YAML files.
-    if service_registry::builtin_recipe(&name).is_some() {
-        return service_registry::builtin_recipe_version(&name, version).ok_or_else(|| {
-            configuration_error(format!(
-                "Unsupported version '{}' for built-in service '{}'",
-                version.unwrap_or("default"),
-                name
-            ))
-        });
-    }
-
-    // 3. Cached recipes are only used for services that
-    // are not provided by the installed built-in registry.
-    //
-    // Remote recipes must be explicitly added beforehand.
+    // 2. Local cache for previously installed remote recipes.
     service_registry::cached_recipe_version(project_root, &name, version)
         .map_err(DevinitError::FileIOError)?
         .ok_or_else(|| {

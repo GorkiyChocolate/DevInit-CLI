@@ -13,7 +13,7 @@ use devinit_cli_2::models::docker_compose_struct::RecipeCompose;
 use devinit_cli_2::models::k8s_struct::{
     Container, Deployment, DeploymentSpec, LabelSelector, ObjectMeta, PodSpec, PodTemplateSpec,
 };
-use devinit_cli_2::models::services_struct::Services;
+use devinit_cli_2::service_registry::packaged_recipe_version;
 use devinit_cli_2::validator::cicd_validator::validate_pipeline;
 use devinit_cli_2::validator::compile_validator::validate_compile;
 use devinit_cli_2::validator::k8s_validator::validate_deployment;
@@ -206,21 +206,44 @@ fn rejects_an_empty_file() {
 fn generates_all_configured_targets() {
     let output =
         std::env::temp_dir().join(format!("devinit-generator-test-{}", std::process::id()));
+
+    let _ = fs::remove_dir_all(&output);
+
+    let pipeline = Pipeline {
+        provider: CiProvider::Github,
+        triggers: Vec::new(),
+        jobs: vec![Job {
+            name: "build".to_string(),
+            runner: Runner::UbuntuLatest,
+            needs: Vec::new(),
+            steps: vec![Step {
+                name: "Build".to_string(),
+                action: StepAction::Run {
+                    command: "cargo build".to_string(),
+                },
+                env: BTreeMap::new(),
+            }],
+        }],
+    };
+
     let spec = CompileSpec {
-        services: vec![CompileService::BuiltIn(Services::Redis)],
+        services: vec![CompileService::Custom(Box::new(
+            packaged_recipe_version("redis", None).unwrap().unwrap(),
+        ))],
         kubernetes: Some(deployment()),
-        cicd: Some(Pipeline {
-            provider: CiProvider::Github,
-            triggers: Vec::new(),
-            jobs: Vec::new(),
-        }),
+        cicd: Some(pipeline),
     };
 
     let paths = generate(&spec, &output).expect("generation should succeed");
+
     assert_eq!(paths.len(), 3);
+
     assert!(paths.contains(&output.join("docker-compose.yaml")));
+
     assert!(paths.contains(&output.join("k8s/backend-deployment.yaml")));
+
     assert!(paths.contains(&output.join(".github/workflows/devinit.yml")));
+
     let _ = fs::remove_dir_all(output);
 }
 
@@ -285,8 +308,14 @@ fn generates_gitlab_pipeline_path_and_structure() {
 fn generates_selected_services_with_descriptions() {
     let output = std::env::temp_dir().join(format!("devinit-compose-test-{}", std::process::id()));
     let services = vec![
-        CompileService::BuiltIn(Services::PostgreSQL),
-        CompileService::BuiltIn(Services::Redis),
+        CompileService::Custom(Box::new(
+            packaged_recipe_version("postgresql", None)
+                .unwrap()
+                .unwrap(),
+        )),
+        CompileService::Custom(Box::new(
+            packaged_recipe_version("redis", None).unwrap().unwrap(),
+        )),
     ];
 
     let paths = generate_docker_compose(&services, &output).expect("generation should succeed");

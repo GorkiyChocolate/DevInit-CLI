@@ -1,21 +1,10 @@
 use crate::models::docker_compose_struct::RecipeCompose;
-use crate::models::services_struct::Services;
 use crate::service_definitions::load_service_registry;
 use crate::service_paths::find_services_directory;
 
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-
-const VERSIONED: &[(&str, &[&str])] =
-    &[("postgresql", &["15", "16", "17"]), ("redis", &["6", "7"])];
-
-pub fn supported_versions(name: &str) -> Option<&'static [&'static str]> {
-    VERSIONED
-        .iter()
-        .find(|(service, _)| *service == name)
-        .map(|(_, versions)| *versions)
-}
 
 /// Loads a service recipe from the installed YAML registry.
 ///
@@ -39,34 +28,6 @@ pub fn packaged_recipe_version(
     };
 
     definition.to_recipe(version).map(Some)
-}
-
-pub fn builtin_recipe(name: &str) -> Option<RecipeCompose> {
-    builtin_recipe_version(name, None)
-}
-
-pub fn builtin_recipe_version(name: &str, version: Option<&str>) -> Option<RecipeCompose> {
-    let name = name.trim().to_ascii_lowercase();
-
-    let service: Services = serde_json::from_value(serde_json::Value::String(name.clone())).ok()?;
-
-    let mut recipe = service.to_recipe();
-
-    match (name.as_str(), version) {
-        ("postgresql", Some(v)) if ["15", "16", "17"].contains(&v) => {
-            recipe.image = format!("postgres:{v}");
-        }
-        ("redis", Some(v)) if ["6", "7"].contains(&v) => {
-            recipe.image = format!("redis:{v}");
-        }
-        (_, Some(v)) if recipe.image.rsplit(':').next() != Some(v) => {
-            return None;
-        }
-        (_, Some(_)) => {}
-        _ => {}
-    }
-
-    Some(recipe)
 }
 
 fn valid_component(value: &str) -> bool {
@@ -173,18 +134,6 @@ pub fn cached_recipe_version(
             io::ErrorKind::InvalidData,
             "Cached recipe name mismatch",
         ));
-    }
-
-    if let Some(v) = version {
-        // Built-in recipes must resolve to their pinned image tag.
-        if let Some(expected) = builtin_recipe_version(name, Some(v))
-            && recipe.image != expected.image
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Cached image does not match the requested version",
-            ));
-        }
     }
 
     Ok(Some(recipe))

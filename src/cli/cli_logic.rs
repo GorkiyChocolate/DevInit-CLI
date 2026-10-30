@@ -174,19 +174,6 @@ pub fn cli_logic() -> Result<(), DevinitError> {
 
             let recipe = if let Some(recipe) = packaged {
                 recipe
-            } else if crate::service_registry::builtin_recipe(&name).is_some() {
-                // Transitional compatibility for services not yet
-                // migrated to YAML definitions.
-                crate::service_registry::builtin_recipe_version(&name, requested_version)
-                    .ok_or_else(|| {
-                        let available = crate::service_registry::supported_versions(&name)
-                            .map(|versions| versions.join(", "))
-                            .unwrap_or_else(|| "default version only".to_string());
-
-                        DevinitError::ConfigurationError(format!(
-                            "Unsupported version for {name}. Available: {available}"
-                        ))
-                    })?
             } else if let Some(recipe) =
                 crate::service_registry::cached_recipe_version(&cwd, &name, requested_version)
                     .map_err(DevinitError::FileIOError)?
