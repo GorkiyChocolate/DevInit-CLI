@@ -1,0 +1,61 @@
+name: DevInit packages (manual pre-release)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test and build
+        working-directory: cli
+        run: |
+          cargo test --locked
+          cargo build --release --locked --bin devinit
+      - name: Package Linux binary
+        run: |
+          mkdir -p dist
+          cp cli/target/release/devinit dist/devinit
+          tar -C dist -czf dist/devinit-linux-x64.tar.gz devinit
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devinit-linux-x64
+          path: dist/devinit-linux-x64.tar.gz
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test and build
+        working-directory: cli
+        shell: pwsh
+        run: |
+          cargo test --locked
+          cargo build --release --locked --bin devinit
+          .\target\release\devinit.exe --version
+      - name: Package portable binary
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path cli/target/release/devinit.exe -DestinationPath dist/devinit-windows-x64.zip
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (!(Test-Path $compiler)) { throw 'Inno Setup 6 is missing on the Windows runner' }
+          & $compiler '/DAppVersion=0.0.2' '/DBinaryDir=cli\target\release' '/DOutputDir=dist' 'installer\windows\DevInit.iss'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devinit-windows-x64
+          path: |
+            dist/devinit-windows-x64.zip
+            dist/DevInit-Setup-0.0.2.exe
+          if-no-files-found: error
