@@ -20,7 +20,7 @@ fn global_config_path() -> Result<PathBuf, DevinitError> {
             DevinitError::ConfigurationError("APPDATA environment variable is not defined".into())
         })?;
 
-        return Ok(PathBuf::from(appdata).join("DevInit").join("devinit.yaml"));
+        Ok(PathBuf::from(appdata).join("DevInit").join("devinit.yaml"))
     }
 
     #[cfg(not(target_os = "windows"))]
