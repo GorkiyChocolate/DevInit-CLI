@@ -1,3 +1,4 @@
+
 name: DevInit packages (manual pre-release)
 
 on:
@@ -7,95 +8,331 @@ permissions:
   contents: read
 
 jobs:
-    linux:
-      runs-on: ubuntu-latest
-      steps:
-        - uses: actions/checkout@v4
-        - uses: dtolnay/rust-toolchain@stable
+  linux:
+    name: Linux x64 package
+    runs-on: ubuntu-latest
 
-        - name: Test and build
-          run: |
-            cargo test --locked
-            cargo build --release --locked --bin devinit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-        - name: Package Linux binary
-          run: |
-            mkdir -p dist/package/resources/services
-            cp target/release/devinit dist/package/devinit
-            cp resources/services/*.yaml dist/package/resources/services/
-            tar -C dist/package -czf dist/devinit-linux-x64.tar.gz devinit resources
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-        - uses: actions/upload-artifact@v4
-          with:
-            name: devinit-linux-x64
-            path: dist/devinit-linux-x64.tar.gz
-            if-no-files-found: error
+      - name: Validate repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f Cargo.toml
+          test -f Cargo.lock
+          test -d resources/services
+          count=$(find resources/services -maxdepth 1 -name '*.yaml' | wc -l)
+          echo "Service definitions: $count"
+          test "$count" -eq 12
 
-    windows:
-      runs-on: windows-latest
-      steps:
-          - uses: actions/upload-artifact@v4
-            with:
-              name: devinit-windows-x64
-              path: |
-                dist/devinit-windows-x64.zip
-                dist/DevInit-Setup-0.0.2.exe
-              if-no-files-found: error
-          - uses: dtolnay/rust-toolchain@stable
-          
-          - name: Test and build
-            shell: pwsh
-            run: |
-              cargo test --locked
-              cargo build --release --locked --bin devinit
-              .\target\release\devinit.exe --version
+      - name: Test and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo build --release --locked --bin devinit
 
-          - name: Package portable binary
-            shell: pwsh
-            run: |
-              New-Item -ItemType Directory -Force dist/package/resources/services | Out-Null
-              Copy-Item target/release/devinit.exe dist/package/devinit.exe
-              Copy-Item resources/services/*.yaml dist/package/resources/services/
-              Compress-Archive -Path dist/package/* -DestinationPath dist/devinit-windows-x64.zip
-          - name: Diagnose installer paths
-            shell: pwsh
-            run: |
-              Write-Host "Working directory: $PWD"
-              Write-Host "Installer exists:"
-              Test-Path installer/windows/DevInit.iss
-              Write-Host "Binary exists:"
-              Test-Path target/release/devinit.exe
-              Write-Host "Registry exists:"
-              Test-Path resources/services
-              Write-Host "Installer directory:"
-              Get-ChildItem installer/windows -ErrorAction SilentlyContinue
-          - name: Build installer
-            shell: pwsh
-            run: |
-              $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
-              if (!(Test-Path $compiler)) {
-                throw 'Inno Setup 6 is missing on the Windows runner'
-              }
+      - name: Package Linux
+        shell: bash
+        run: |
+          set -euo pipefail
 
-              $binaryDir = (Resolve-Path 'target/release').Path
-              $registryDir = (Resolve-Path 'resources/services').Path
-              $outputDir = Join-Path $PWD 'dist'
-              $installerScript = (Resolve-Path 'installer/windows/DevInit.iss').Path
+          mkdir -p dist/staging/linux/resources/services
 
-              & $compiler `
-                "/DAppVersion=0.0.2" `
-                "/DBinaryDir=$binaryDir" `
-                "/DRegistryDir=$registryDir" `
-                "/DOutputDir=$outputDir" `
-                "$installerScript"
+          cp target/release/devinit dist/staging/linux/devinit
+          cp resources/services/*.yaml dist/staging/linux/resources/services/
 
-              if ($LASTEXITCODE -ne 0) {
-                exit $LASTEXITCODE
-              }
-          - uses: actions/upload-artifact@v4
-            with:
-              name: devinit-windows-x64
-              path: |
-                dist/devinit-windows-x64.zip
-                dist/DevInit-Setup-0.0.2.exe
-              if-no-files-found: error
+          chmod +x dist/staging/linux/devinit
+
+          tar -C dist/staging/linux \
+            -czf dist/devinit-linux-x64.tar.gz \
+            devinit resources
+
+          test -s dist/devinit-linux-x64.tar.gz
+
+          tar -tzf dist/devinit-linux-x64.tar.gz
+
+      - name: Test portable Linux package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p /tmp/devinit-smoke
+          tar -xzf dist/devinit-linux-x64.tar.gz -C /tmp/devinit-smoke
+
+          /tmp/devinit-smoke/devinit --version
+
+          test "$(find /tmp/devinit-smoke/resources/services \
+            -maxdepth 1 -name '*.yaml' | wc -l)" -eq 12
+
+          mkdir -p /tmp/devinit-smoke-project
+
+          cat > /tmp/devinit-smoke-project/compile.yaml <<'YAML'
+          services:
+            - redis
+          YAML
+
+          cd /tmp/devinit-smoke-project
+
+          /tmp/devinit-smoke/devinit check
+          /tmp/devinit-smoke/devinit compile
+
+          test -s docker-compose.yaml
+          grep -q 'redis:7' docker-compose.yaml
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: devinit-linux-x64
+          path: dist/devinit-linux-x64.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64 packages
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate repository
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          foreach ($path in @(
+            'Cargo.toml',
+            'Cargo.lock',
+            'resources/services',
+            'installer/windows/DevInit.iss'
+          )) {
+            if (!(Test-Path $path)) {
+              throw "Missing required path: $path"
+            }
+          }
+
+          $recipes = @(Get-ChildItem 'resources/services' -Filter '*.yaml' -File)
+
+          if ($recipes.Count -ne 12) {
+            throw "Expected 12 service recipes, found $($recipes.Count)"
+          }
+
+      - name: Test and build
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          cargo test --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          cargo clippy --all-targets --locked -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          cargo build --release --locked --bin devinit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          & .\target\release\devinit.exe --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Prepare Windows package
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $metadata = cargo metadata --no-deps --format-version 1 |
+            ConvertFrom-Json
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Cannot read Cargo package metadata"
+          }
+
+          $package = $metadata.packages |
+            Where-Object { $_.name -eq 'devinit_cli_2' } |
+            Select-Object -First 1
+
+          if (!$package) {
+            throw "DevInit package not found in Cargo metadata"
+          }
+
+          $version = $package.version
+          "APP_VERSION=$version" >> $env:GITHUB_ENV
+
+          $packageDir = Join-Path $env:GITHUB_WORKSPACE 'dist/staging/windows'
+          $serviceDir = Join-Path $packageDir 'resources/services'
+
+          New-Item -ItemType Directory -Force $serviceDir |
+            Out-Null
+
+          Copy-Item 'target/release/devinit.exe' `
+            (Join-Path $packageDir 'devinit.exe')
+
+          Copy-Item 'resources/services/*.yaml' $serviceDir
+
+          if (!(Test-Path (Join-Path $packageDir 'devinit.exe'))) {
+            throw "Packaged devinit.exe is missing"
+          }
+
+          $count = @(Get-ChildItem $serviceDir -Filter '*.yaml' -File).Count
+
+          if ($count -ne 12) {
+            throw "Packaged registry incomplete: $count/12"
+          }
+
+          $zip = Join-Path $env:GITHUB_WORKSPACE 'dist/devinit-windows-x64.zip'
+
+          Compress-Archive `
+            -Path (Join-Path $packageDir '*') `
+            -DestinationPath $zip `
+            -Force
+
+          if (!(Test-Path $zip)) {
+            throw "Windows ZIP was not created"
+          }
+
+          Write-Host "Version: $version"
+          Write-Host "Portable ZIP: $zip"
+
+      - name: Test portable Windows package
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $extractDir = Join-Path $env:RUNNER_TEMP 'devinit-portable-test'
+
+          New-Item -ItemType Directory -Force $extractDir |
+            Out-Null
+
+          Expand-Archive `
+            -Path 'dist/devinit-windows-x64.zip' `
+            -DestinationPath $extractDir `
+            -Force
+
+          $exe = Join-Path $extractDir 'devinit.exe'
+
+          if (!(Test-Path $exe)) {
+            throw "devinit.exe missing from ZIP"
+          }
+
+          $recipes = Join-Path $extractDir 'resources/services'
+
+          if (@(Get-ChildItem $recipes -Filter '*.yaml').Count -ne 12) {
+            throw "YAML Registry missing from ZIP"
+          }
+
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $smokeDir = Join-Path $env:RUNNER_TEMP 'devinit-smoke-project'
+          New-Item -ItemType Directory -Force $smokeDir | Out-Null
+
+          Set-Content `
+            -Path (Join-Path $smokeDir 'compile.yaml') `
+            -Value "services:`n  - redis`n"
+
+          Push-Location $smokeDir
+          try {
+            & $exe check
+            if ($LASTEXITCODE -ne 0) {
+              throw "Portable CLI check failed"
+            }
+
+            & $exe compile
+            if ($LASTEXITCODE -ne 0) {
+              throw "Portable CLI compile failed"
+            }
+
+            if (!(Test-Path 'docker-compose.yaml')) {
+              throw "Docker Compose was not generated"
+            }
+          }
+          finally {
+            Pop-Location
+          }
+
+      - name: Build Windows installer
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+
+          if (!(Test-Path $compiler)) {
+            throw "Inno Setup 6 compiler not found"
+          }
+
+          $script = Join-Path $env:GITHUB_WORKSPACE 'installer/windows/DevInit.iss'
+          $packageDir = Join-Path $env:GITHUB_WORKSPACE 'dist/staging/windows'
+          $outputDir = Join-Path $env:GITHUB_WORKSPACE 'dist'
+          $version = $env:APP_VERSION
+
+          if (!(Test-Path $script)) {
+            throw "Inno Setup script missing"
+          }
+
+          if (!(Test-Path (Join-Path $packageDir 'devinit.exe'))) {
+            throw "Packaged binary missing"
+          }
+
+          & $compiler `
+            "/DAppVersion=$version" `
+            "/DPackageDir=$packageDir" `
+            "/O$outputDir" `
+            "/FDevInit-Setup-$version" `
+            "$script"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup failed with exit code $LASTEXITCODE"
+          }
+
+          $expected = Join-Path $outputDir "DevInit-Setup-$version.exe"
+
+          if (!(Test-Path $expected)) {
+            throw "Installer missing: $expected"
+          }
+
+          if ((Get-Item $expected).Length -eq 0) {
+            throw "Installer is empty"
+          }
+
+          Write-Host "Installer created: $expected"
+
+      - name: Verify final Windows artifacts
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $zip = 'dist/devinit-windows-x64.zip'
+          $installer = "dist/DevInit-Setup-$env:APP_VERSION.exe"
+
+          foreach ($path in @($zip, $installer)) {
+            if (!(Test-Path $path)) {
+              throw "Missing artifact: $path"
+            }
+
+            $item = Get-Item $path
+
+            if ($item.Length -le 0) {
+              throw "Empty artifact: $path"
+            }
+
+            Write-Host "$($item.FullName) - $($item.Length) bytes"
+          }
+
+          Get-FileHash $zip -Algorithm SHA256
+          Get-FileHash $installer -Algorithm SHA256
+
+      - name: Upload Windows packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: devinit-windows-x64
+          path: |
+            dist/*.zip
+            dist/*.exe
+          if-no-files-found: error
