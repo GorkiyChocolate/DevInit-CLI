@@ -34,7 +34,13 @@ jobs:
     windows:
       runs-on: windows-latest
       steps:
-          - uses: actions/checkout@v4
+          - uses: actions/upload-artifact@v4
+            with:
+              name: devinit-windows-x64
+              path: |
+                dist/devinit-windows-x64.zip
+                dist/DevInit-Setup-0.0.2.exe
+              if-no-files-found: error
           - uses: dtolnay/rust-toolchain@stable
           
           - name: Test and build
