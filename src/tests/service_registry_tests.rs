@@ -78,3 +78,110 @@ fn preserves_existing_cache() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn rejects_modified_cached_recipe() {
+    let root = std::env::temp_dir().join(format!("devinit-cache-integrity-{}", std::process::id()));
+
+    let _ = fs::remove_dir_all(&root);
+
+    let recipe = packaged_recipe_version("redis", Some("6"))
+        .unwrap()
+        .unwrap();
+
+    let path = cache_recipe_version(&root, &recipe, Some("6")).unwrap();
+
+    assert!(metadata_path(&path).exists());
+
+    // Confirm that the original cache is valid.
+    assert!(
+        cached_recipe_version(&root, "redis", Some("6"))
+            .unwrap()
+            .is_some()
+    );
+
+    // Simulate modification after caching.
+    let original = fs::read_to_string(&path).unwrap();
+    let modified = original.replace("redis:6", "redis:7");
+
+    assert_ne!(original, modified);
+
+    fs::write(&path, modified).unwrap();
+
+    let error = cached_recipe_version(&root, "redis", Some("6")).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("checksum mismatch"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rejects_cache_version_mismatch() {
+    let root = std::env::temp_dir().join(format!("devinit-cache-version-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+
+    let recipe = packaged_recipe_version("redis", Some("6"))
+        .unwrap()
+        .unwrap();
+
+    let path = cache_recipe_version(&root, &recipe, Some("6")).unwrap();
+    let meta_path = metadata_path(&path);
+
+    let mut metadata: CacheMetadata =
+        serde_json::from_slice(&fs::read(&meta_path).unwrap()).unwrap();
+
+    metadata.version = Some("7".to_string());
+
+    fs::write(&meta_path, serde_json::to_vec_pretty(&metadata).unwrap()).unwrap();
+
+    let error = cached_recipe_version(&root, "redis", Some("6")).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("version mismatch"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rejects_cache_without_metadata() {
+    let root =
+        std::env::temp_dir().join(format!("devinit-cache-no-metadata-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+
+    let recipe = packaged_recipe_version("redis", Some("6"))
+        .unwrap()
+        .unwrap();
+
+    let path = cache_recipe_version(&root, &recipe, Some("6")).unwrap();
+
+    fs::remove_file(metadata_path(&path)).unwrap();
+
+    let error = cached_recipe_version(&root, "redis", Some("6")).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("Missing cache metadata"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rejects_modified_recipe_with_same_image() {
+    let root = std::env::temp_dir().join(format!("devinit-cache-conflict-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+
+    let recipe = packaged_recipe_version("redis", Some("6"))
+        .unwrap()
+        .unwrap();
+
+    cache_recipe_version(&root, &recipe, Some("6")).unwrap();
+
+    let mut modified = recipe.clone();
+    modified.ports = Some(vec!["6380:6379".to_string()]);
+
+    let error = cache_recipe_version(&root, &modified, Some("6")).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+
+    fs::remove_dir_all(root).unwrap();
+}
