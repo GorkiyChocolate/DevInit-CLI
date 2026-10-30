@@ -124,3 +124,45 @@ services:
     assert_eq!(service["name"].as_str(), Some("redis"));
     assert_eq!(service["image"].as_str(), Some("redis:7"));
 }
+
+#[test]
+fn packaged_recipe_takes_priority_over_cached_recipe() {
+    let root =
+        std::env::temp_dir().join(format!("devinit-registry-priority-{}", std::process::id()));
+
+    let recipe = crate::service_registry::packaged_recipe_version("postgresql", None)
+        .unwrap()
+        .unwrap();
+
+    let mut cached = recipe.clone();
+    cached.image = "postgres:untrusted".to_string();
+
+    crate::service_registry::cache_recipe_version(&root, &cached, None).unwrap();
+
+    let resolved = resolve_recipe(&root, "postgresql", None).unwrap();
+
+    assert_eq!(resolved.image, recipe.image);
+    assert_eq!(resolved.image, "postgres:16");
+
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn unsupported_builtin_version_is_not_loaded_from_cache() {
+    let root =
+        std::env::temp_dir().join(format!("devinit-registry-version-{}", std::process::id()));
+
+    let mut recipe = crate::service_registry::packaged_recipe_version("postgresql", None)
+        .unwrap()
+        .unwrap();
+
+    recipe.image = "postgres:99".to_string();
+
+    crate::service_registry::cache_recipe_version(&root, &recipe, Some("99")).unwrap();
+
+    let result = resolve_recipe(&root, "postgresql", Some("99"));
+
+    assert!(result.is_err());
+
+    std::fs::remove_dir_all(&root).unwrap();
+}

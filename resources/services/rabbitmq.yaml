@@ -1,0 +1,24 @@
+
+schema_version: 1
+name: rabbitmq
+description: RabbitMQ message broker with management UI
+default_version: "4.1"
+
+versions:
+  "3.13":
+    image: rabbitmq:3.13-management
+  "4.0":
+    image: rabbitmq:4.0-management
+  "4.1":
+    image: rabbitmq:4.1-management
+
+defaults:
+  ports:
+    - "5672:5672"
+    - "15672:15672"
+  environment:
+    - "RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER:-admin}"
+    - "RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS:?Set RABBITMQ_DEFAULT_PASS}"
+  volumes:
+    - "rabbitmq_data:/var/lib/rabbitmq"
+  restart: unless-stopped

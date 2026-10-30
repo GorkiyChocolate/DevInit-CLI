@@ -1,0 +1,23 @@
+
+schema_version: 1
+name: mongodb
+description: MongoDB document database
+default_version: "7"
+
+versions:
+  "7":
+    image: mongo:7
+  "8":
+    image: mongo:8
+  "8.0":
+    image: mongo:8.0
+
+defaults:
+  ports:
+    - "27017:27017"
+  environment:
+    - "MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME}"
+    - "MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD}"
+  volumes:
+    - "mongodb_data:/data/db"
+  restart: unless-stopped

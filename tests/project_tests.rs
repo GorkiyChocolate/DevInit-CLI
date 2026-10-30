@@ -1,5 +1,6 @@
 use devinit_cli_2::cli::cli_logic::compile_at;
 use devinit_cli_2::cli::cli_logic::compile_at_with_options;
+use devinit_cli_2::cli::cli_logic::{PlannedAction, check_at, dry_run_at};
 use devinit_cli_2::errors::DevinitError;
 use devinit_cli_2::file_config::file_validator::ensure_file_not_empty;
 use devinit_cli_2::generator::cicd_generator::generate_cicd;
@@ -13,7 +14,8 @@ use devinit_cli_2::models::docker_compose_struct::RecipeCompose;
 use devinit_cli_2::models::k8s_struct::{
     Container, Deployment, DeploymentSpec, LabelSelector, ObjectMeta, PodSpec, PodTemplateSpec,
 };
-use devinit_cli_2::models::services_struct::Services;
+use devinit_cli_2::service_registry::cache_recipe_version;
+use devinit_cli_2::service_registry::packaged_recipe_version;
 use devinit_cli_2::validator::cicd_validator::validate_pipeline;
 use devinit_cli_2::validator::compile_validator::validate_compile;
 use devinit_cli_2::validator::k8s_validator::validate_deployment;
@@ -206,21 +208,44 @@ fn rejects_an_empty_file() {
 fn generates_all_configured_targets() {
     let output =
         std::env::temp_dir().join(format!("devinit-generator-test-{}", std::process::id()));
+
+    let _ = fs::remove_dir_all(&output);
+
+    let pipeline = Pipeline {
+        provider: CiProvider::Github,
+        triggers: Vec::new(),
+        jobs: vec![Job {
+            name: "build".to_string(),
+            runner: Runner::UbuntuLatest,
+            needs: Vec::new(),
+            steps: vec![Step {
+                name: "Build".to_string(),
+                action: StepAction::Run {
+                    command: "cargo build".to_string(),
+                },
+                env: BTreeMap::new(),
+            }],
+        }],
+    };
+
     let spec = CompileSpec {
-        services: vec![CompileService::BuiltIn(Services::Redis)],
+        services: vec![CompileService::Custom(Box::new(
+            packaged_recipe_version("redis", None).unwrap().unwrap(),
+        ))],
         kubernetes: Some(deployment()),
-        cicd: Some(Pipeline {
-            provider: CiProvider::Github,
-            triggers: Vec::new(),
-            jobs: Vec::new(),
-        }),
+        cicd: Some(pipeline),
     };
 
     let paths = generate(&spec, &output).expect("generation should succeed");
+
     assert_eq!(paths.len(), 3);
+
     assert!(paths.contains(&output.join("docker-compose.yaml")));
+
     assert!(paths.contains(&output.join("k8s/backend-deployment.yaml")));
+
     assert!(paths.contains(&output.join(".github/workflows/devinit.yml")));
+
     let _ = fs::remove_dir_all(output);
 }
 
@@ -285,8 +310,14 @@ fn generates_gitlab_pipeline_path_and_structure() {
 fn generates_selected_services_with_descriptions() {
     let output = std::env::temp_dir().join(format!("devinit-compose-test-{}", std::process::id()));
     let services = vec![
-        CompileService::BuiltIn(Services::PostgreSQL),
-        CompileService::BuiltIn(Services::Redis),
+        CompileService::Custom(Box::new(
+            packaged_recipe_version("postgresql", None)
+                .unwrap()
+                .unwrap(),
+        )),
+        CompileService::Custom(Box::new(
+            packaged_recipe_version("redis", None).unwrap().unwrap(),
+        )),
     ];
 
     let paths = generate_docker_compose(&services, &output).expect("generation should succeed");
@@ -434,4 +465,142 @@ fn reports_empty_container_image() {
     let mut errors = Vec::new();
     validate_deployment(&deployment, &mut errors);
     assert!(errors.iter().any(|error| error.path.ends_with(".image")));
+}
+
+#[test]
+fn compiles_unknown_service_from_local_cache() {
+    let root = std::env::temp_dir().join(format!("devinit-custom-e2e-{}", std::process::id()));
+
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+
+    let input = root.join("compile.yaml");
+    let output = root.join("generated");
+
+    fs::write(
+        &input,
+        r#"
+services:
+  - name: caddy
+    version: "2.10"
+"#,
+    )
+    .unwrap();
+
+    // Caddy is not part of the installed YAML Registry.
+    let recipe = RecipeCompose {
+        name: "caddy".to_string(),
+        description: Some("Custom HTTP server".to_string()),
+        image: "caddy:2.10".to_string(),
+        ports: Some(vec!["127.0.0.1:8080:80".to_string()]),
+        environment: None,
+        volumes: None,
+        networks: None,
+        depends_on: None,
+        restart: Some("unless-stopped".to_string()),
+        command: None,
+        files: None,
+        env: None,
+        notes: None,
+    };
+
+    // Save using the real cache API, including SHA-256 metadata.
+    cache_recipe_version(&root, &recipe, Some("2.10")).unwrap();
+
+    // Check must plan the Compose file without writing it.
+    let planned_count = check_at(&input).unwrap();
+
+    assert_eq!(planned_count, 1);
+    assert!(!output.join("docker-compose.yaml").exists());
+
+    // Dry-run must report CREATE without generating files.
+    let preview = dry_run_at(&input, &output, false).unwrap();
+
+    assert_eq!(preview.len(), 1);
+    assert_eq!(preview[0].action, PlannedAction::Create);
+    assert!(!output.join("docker-compose.yaml").exists());
+
+    // Compile generates the actual Docker Compose file.
+    let generated = compile_at_with_options(&input, &output, false).unwrap();
+
+    let compose_path = output.join("docker-compose.yaml");
+
+    assert_eq!(generated.len(), 1);
+    assert!(generated.contains(&compose_path));
+
+    let contents = fs::read_to_string(&compose_path).unwrap();
+
+    assert!(contents.contains("caddy:"));
+    assert!(contents.contains("caddy:2.10"));
+    assert!(contents.contains("127.0.0.1:8080:80"));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn legacy_shorthand_services_still_compile() {
+    let (input, output) = temp_paths("legacy-shorthand");
+    let root = input.parent().unwrap();
+
+    let _ = fs::remove_dir_all(root);
+    fs::create_dir_all(root).unwrap();
+
+    fs::write(
+        &input,
+        r#"
+services:
+  - postgresql
+  - redis
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(check_at(&input).unwrap(), 1);
+
+    let paths =
+        compile_at_with_options(&input, &output, false).expect("legacy shorthand must compile");
+
+    assert_eq!(paths.len(), 1);
+
+    let compose = fs::read_to_string(output.join("docker-compose.yaml")).unwrap();
+
+    assert!(compose.contains("postgresql:"));
+    assert!(compose.contains("redis:"));
+    assert!(compose.contains("postgres:16"));
+    assert!(compose.contains("redis:7"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn legacy_custom_service_still_compiles() {
+    let (input, output) = temp_paths("legacy-custom");
+    let root = input.parent().unwrap();
+
+    let _ = fs::remove_dir_all(root);
+    fs::create_dir_all(root).unwrap();
+
+    fs::write(
+        &input,
+        r#"
+services:
+  - name: custom-api
+    image: example/custom-api:1.0
+    ports:
+      - "127.0.0.1:8080:8080"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(check_at(&input).unwrap(), 1);
+
+    compile_at_with_options(&input, &output, false).unwrap();
+
+    let compose = fs::read_to_string(output.join("docker-compose.yaml")).unwrap();
+
+    assert!(compose.contains("custom-api:"));
+    assert!(compose.contains("example/custom-api:1.0"));
+    assert!(compose.contains("127.0.0.1:8080:8080"));
+
+    fs::remove_dir_all(root).unwrap();
 }
