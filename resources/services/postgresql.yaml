@@ -1,3 +1,4 @@
+
 schema_version: 1
 name: postgresql
 description: PostgreSQL relational database
@@ -14,4 +15,10 @@ versions:
 defaults:
   ports:
     - "5432:5432"
+  environment:
+    - "POSTGRES_USER=${POSTGRES_USER:-app}"
+    - "POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}"
+    - "POSTGRES_DB=${POSTGRES_DB:-app}"
+  volumes:
+    - "postgres_data:/var/lib/postgresql/data"
   restart: unless-stopped

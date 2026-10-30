@@ -1,0 +1,29 @@
+
+schema_version: 1
+name: s3
+description: Legacy MinIO S3-compatible object storage for local development
+default_version: "2025-09-07"
+
+versions:
+  "2025-09-07":
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+
+defaults:
+  ports:
+    - "127.0.0.1:9000:9000"
+    - "127.0.0.1:9001:9001"
+
+  environment:
+    - "MINIO_ROOT_USER=${MINIO_ROOT_USER:?Set MINIO_ROOT_USER}"
+    - "MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}"
+
+  volumes:
+    - "minio_data:/data"
+
+  command:
+    - "server"
+    - "/data"
+    - "--console-address"
+    - ":9001"
+
+  restart: unless-stopped

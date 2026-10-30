@@ -27,7 +27,10 @@ pub struct RecipeCompose {
     pub command: Option<Vec<String>>,
 
     /// Optionally defines a file generated with the recipe.
-    pub files: Option<File>,
+
+    /// Additional files generated alongside infrastructure output.
+    #[serde(default, deserialize_with = "deserialize_recipe_files")]
+    pub files: Option<Vec<File>>,
 
     // Environment file settings.
     /// Stores entries written to an environment file.
@@ -51,4 +54,24 @@ pub struct File {
     pub path: String,
     /// Stores the output file contents.
     pub content: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum FileInput {
+    Single(File),
+    Multiple(Vec<File>),
+}
+
+/// Accepts both a single file object and a list of files.
+pub fn deserialize_recipe_files<'de, D>(deserializer: D) -> Result<Option<Vec<File>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let input = Option::<FileInput>::deserialize(deserializer)?;
+
+    Ok(input.map(|files| match files {
+        FileInput::Single(file) => vec![file],
+        FileInput::Multiple(files) => files,
+    }))
 }

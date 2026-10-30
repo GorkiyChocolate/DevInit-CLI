@@ -20,7 +20,6 @@ pub mod models {
     pub mod env_struct;
     pub mod k8s_struct;
     pub mod resolver_struct;
-    pub mod services_struct;
 }
 
 pub mod generator;

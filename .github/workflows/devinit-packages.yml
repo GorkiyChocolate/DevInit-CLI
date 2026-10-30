@@ -19,10 +19,16 @@ jobs:
           cargo build --release --locked --bin devinit
       - name: Package Linux binary
         run: |
+<<<<<<< HEAD
           mkdir -p dist/package/resources/services
           cp cli/target/release/devinit dist/package/devinit
           cp cli/resources/services/*.yaml dist/package/resources/services/
           tar -C dist/package -czf dist/devinit-linux-x64.tar.gz devinit resources
+=======
+          mkdir -p dist
+          cp cli/target/release/devinit dist/devinit
+          tar -C dist -czf dist/devinit-linux-x64.tar.gz devinit
+>>>>>>> bec7741625538b821e9213cf51b909cd0c769753
       - uses: actions/upload-artifact@v4
         with:
           name: devinit-linux-x64
@@ -44,10 +50,15 @@ jobs:
       - name: Package portable binary
         shell: pwsh
         run: |
+<<<<<<< HEAD
           New-Item -ItemType Directory -Force dist/package/resources/services | Out-Null
           Copy-Item cli/target/release/devinit.exe dist/package/devinit.exe
           Copy-Item cli/resources/services/*.yaml dist/package/resources/services/
           Compress-Archive -Path dist/package/* -DestinationPath dist/devinit-windows-x64.zip
+=======
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path cli/target/release/devinit.exe -DestinationPath dist/devinit-windows-x64.zip
+>>>>>>> bec7741625538b821e9213cf51b909cd0c769753
       - name: Build installer
         shell: pwsh
         run: |

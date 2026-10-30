@@ -1,0 +1,27 @@
+
+schema_version: 1
+name: elasticsearch
+description: Elasticsearch single-node search and analytics engine
+default_version: "9.5.5"
+
+versions:
+  "9.5.3":
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.3
+  "9.5.4":
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.4
+  "9.5.5":
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.5
+
+defaults:
+  ports:
+    - "127.0.0.1:9200:9200"
+
+  environment:
+    - "discovery.type=single-node"
+    - "xpack.security.enabled=false"
+    - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+
+  volumes:
+    - "elasticsearch_data:/usr/share/elasticsearch/data"
+
+  restart: unless-stopped

@@ -1,0 +1,44 @@
+schema_version: 1
+name: prometheus
+description: Prometheus metrics collection and monitoring
+default_version: "3.13.3"
+
+versions:
+  "3.13.3":
+    image: prom/prometheus:v3.13.3
+
+defaults:
+  ports:
+    - "9090:9090"
+
+  volumes:
+    - "./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro"
+    - "./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro"
+    - "prometheus_data:/prometheus"
+
+  command:
+    - "--config.file=/etc/prometheus/prometheus.yml"
+    - "--storage.tsdb.path=/prometheus"
+    - "--web.enable-lifecycle"
+
+  restart: unless-stopped
+
+  files:
+    - path: prometheus/prometheus.yml
+      content: |
+        global:
+          scrape_interval: 15s
+          evaluation_interval: 15s
+
+        rule_files:
+          - /etc/prometheus/alerts.yml
+
+        scrape_configs:
+          - job_name: prometheus
+            static_configs:
+              - targets:
+                  - localhost:9090
+
+    - path: prometheus/alerts.yml
+      content: |
+        groups: []

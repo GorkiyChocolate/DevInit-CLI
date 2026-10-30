@@ -3,6 +3,7 @@ pub mod docker_compose_generator;
 pub mod k8s_generator;
 pub mod k8s_service_generator;
 use crate::errors::GenerationError;
+use crate::generation_plan::GeneratedFile;
 use crate::generation_plan::GenerationPlan;
 use crate::k8s_manifests::{KubernetesManifest, plan_custom_manifests};
 use crate::models::compile_struct::CompileSpec;
@@ -105,6 +106,20 @@ pub fn build_generation_plan(
         plan.add(docker_compose_generator::plan_docker_compose(
             &spec.services,
         )?)?;
+    }
+
+    // Additional configuration files declared by service recipes.
+    //
+    // These files participate in the same generation plan
+    // as Docker Compose, Kubernetes and CI/CD outputs.
+    for service in &spec.services {
+        let recipe = service.to_recipe();
+
+        if let Some(files) = &recipe.files {
+            for file in files {
+                plan.add(GeneratedFile::new(&file.path, &file.content)?)?;
+            }
+        }
     }
 
     // Legacy Kubernetes Deployment and optional Service
