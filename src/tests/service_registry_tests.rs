@@ -185,3 +185,117 @@ fn rejects_modified_recipe_with_same_image() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn caches_custom_service_without_builtin_definition() {
+    let root = std::env::temp_dir().join(format!("devinit-custom-service-{}", std::process::id()));
+
+    let _ = fs::remove_dir_all(&root);
+
+    let recipe = RecipeCompose {
+        name: "caddy".to_string(),
+        description: Some("Custom HTTP server".to_string()),
+        image: "caddy:2.10".to_string(),
+        ports: Some(vec!["127.0.0.1:8080:80".to_string()]),
+        environment: None,
+        volumes: None,
+        networks: None,
+        depends_on: None,
+        restart: Some("unless-stopped".to_string()),
+        command: None,
+        files: None,
+        env: None,
+        notes: None,
+    };
+
+    let path = cache_recipe_version(&root, &recipe, Some("2.10")).unwrap();
+
+    assert!(path.exists());
+    assert!(metadata_path(&path).exists());
+
+    let resolved = cached_recipe_version(&root, "caddy", Some("2.10"))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(resolved.name, "caddy");
+    assert_eq!(resolved.image, "caddy:2.10");
+    assert_eq!(resolved.ports, recipe.ports);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn resolves_custom_cached_service_through_resolver() {
+    let root = std::env::temp_dir().join(format!("devinit-resolver-custom-{}", std::process::id()));
+
+    let _ = fs::remove_dir_all(&root);
+
+    let recipe = RecipeCompose {
+        name: "caddy".to_string(),
+        description: None,
+        image: "caddy:2.10".to_string(),
+        ports: Some(vec!["127.0.0.1:8080:80".to_string()]),
+        environment: None,
+        volumes: None,
+        networks: None,
+        depends_on: None,
+        restart: Some("unless-stopped".to_string()),
+        command: None,
+        files: None,
+        env: None,
+        notes: None,
+    };
+
+    cache_recipe_version(&root, &recipe, Some("2.10")).unwrap();
+
+    let resolved = crate::resolver::resolve_recipe(&root, "caddy", Some("2.10")).unwrap();
+
+    assert_eq!(resolved.image, "caddy:2.10");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rejects_corrupted_cache_metadata() {
+    let root =
+        std::env::temp_dir().join(format!("devinit-corrupted-metadata-{}", std::process::id()));
+
+    let _ = fs::remove_dir_all(&root);
+
+    let recipe = packaged_recipe_version("redis", Some("6"))
+        .unwrap()
+        .unwrap();
+
+    let path = cache_recipe_version(&root, &recipe, Some("6")).unwrap();
+
+    fs::write(metadata_path(&path), b"{invalid json").unwrap();
+
+    let error = cached_recipe_version(&root, "redis", Some("6")).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rejects_orphaned_cache_metadata() {
+    let root =
+        std::env::temp_dir().join(format!("devinit-orphaned-metadata-{}", std::process::id()));
+
+    let _ = fs::remove_dir_all(&root);
+
+    let recipe = packaged_recipe_version("redis", Some("6"))
+        .unwrap()
+        .unwrap();
+
+    let path = cache_recipe_version(&root, &recipe, Some("6")).unwrap();
+
+    fs::remove_file(&path).unwrap();
+
+    let error = cached_recipe_version(&root, "redis", Some("6")).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("metadata exists without recipe"));
+
+    fs::remove_dir_all(root).unwrap();
+}
