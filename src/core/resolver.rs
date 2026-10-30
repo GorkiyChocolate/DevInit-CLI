@@ -44,8 +44,33 @@ pub fn resolve_document(document: &mut Value, project_root: &Path) -> Result<(),
     };
 
     for (index, service) in services.iter_mut().enumerate() {
+        // Resolve shorthand service declarations using the registry.
+        //
+        // Example:
+        // services:
+        //   - postgresql
+        //   - redis
+        //
+        // Every shorthand service is converted into a complete
+        // RecipeCompose before CompileSpec deserialization.
+        if let Some(name) = service.as_str() {
+            let name = name.trim().to_ascii_lowercase();
+
+            if name.is_empty() {
+                return Err(configuration_error(format!(
+                    "services[{index}]: service name cannot be empty"
+                )));
+            }
+
+            let recipe = resolve_recipe(project_root, &name, None)?;
+
+            *service = serde_yaml::to_value(recipe)?;
+            continue;
+        }
+
         let Some(mapping) = service.as_mapping() else {
-            // Legacy scalar service declarations are preserved.
+            // Leave unsupported value types to the existing
+            // configuration deserializer and validators.
             continue;
         };
 
@@ -117,6 +142,22 @@ pub fn resolve_recipe(
     name: &str,
     version: Option<&str>,
 ) -> Result<RecipeCompose, DevinitError> {
+    // Prefer service definitions distributed as YAML files.
+    //
+    // Invalid registry files and unsupported versions must produce
+    // explicit errors rather than silently falling back to Rust defaults.
+    if let Some(packaged_recipe) = service_registry::packaged_recipe_version(name, version)
+        .map_err(DevinitError::FileIOError)?
+    {
+        let normalized_name = name.trim().to_ascii_lowercase();
+
+        let cached =
+            service_registry::cached_recipe_version(project_root, &normalized_name, version)
+                .map_err(DevinitError::FileIOError)?;
+
+        return Ok(cached.unwrap_or(packaged_recipe));
+    }
+
     let builtin = service_registry::builtin_recipe(name);
 
     if builtin.is_some() {

@@ -1,0 +1,15 @@
+schema_version: 1
+name: redis
+description: Redis in-memory data store
+default_version: "7"
+
+versions:
+  "6":
+    image: redis:6
+  "7":
+    image: redis:7
+
+defaults:
+  ports:
+    - "6379:6379"
+  restart: unless-stopped

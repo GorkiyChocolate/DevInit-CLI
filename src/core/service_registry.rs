@@ -1,5 +1,7 @@
 use crate::models::docker_compose_struct::RecipeCompose;
 use crate::models::services_struct::Services;
+use crate::service_definitions::load_service_registry;
+use crate::service_paths::find_services_directory;
 
 use std::fs;
 use std::io::{self, Write};
@@ -13,6 +15,30 @@ pub fn supported_versions(name: &str) -> Option<&'static [&'static str]> {
         .iter()
         .find(|(service, _)| *service == name)
         .map(|(_, versions)| *versions)
+}
+
+/// Loads a service recipe from the installed YAML registry.
+///
+/// Returns:
+/// - Ok(Some(recipe)) if the service exists.
+/// - Ok(None) if the service is not defined in the YAML registry.
+/// - Err(error) if the registry cannot be loaded or is invalid.
+///
+/// Registry errors are never silently ignored.
+pub fn packaged_recipe_version(
+    name: &str,
+    version: Option<&str>,
+) -> io::Result<Option<RecipeCompose>> {
+    let directory = find_services_directory()?;
+    let registry = load_service_registry(&directory)?;
+
+    let normalized_name = name.trim().to_ascii_lowercase();
+
+    let Some(definition) = registry.get(&normalized_name) else {
+        return Ok(None);
+    };
+
+    definition.to_recipe(version).map(Some)
 }
 
 pub fn builtin_recipe(name: &str) -> Option<RecipeCompose> {

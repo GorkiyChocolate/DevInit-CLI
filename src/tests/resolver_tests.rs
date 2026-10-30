@@ -84,3 +84,43 @@ fn preserves_custom_services() {
         Some("my-api:latest")
     );
 }
+
+#[test]
+fn resolves_shorthand_postgresql_from_yaml() {
+    let mut document: serde_yaml::Value = serde_yaml::from_str(
+        r#"
+services:
+  - postgresql
+"#,
+    )
+    .unwrap();
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    resolve_document(&mut document, root).unwrap();
+
+    let service = &document["services"][0];
+
+    assert_eq!(service["name"].as_str(), Some("postgresql"));
+    assert_eq!(service["image"].as_str(), Some("postgres:16"));
+}
+
+#[test]
+fn resolves_shorthand_redis_from_yaml() {
+    let mut document: serde_yaml::Value = serde_yaml::from_str(
+        r#"
+services:
+  - redis
+"#,
+    )
+    .unwrap();
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    resolve_document(&mut document, root).unwrap();
+
+    let service = &document["services"][0];
+
+    assert_eq!(service["name"].as_str(), Some("redis"));
+    assert_eq!(service["image"].as_str(), Some("redis:7"));
+}

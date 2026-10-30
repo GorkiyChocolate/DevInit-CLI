@@ -1,0 +1,17 @@
+schema_version: 1
+name: postgresql
+description: PostgreSQL relational database
+default_version: "16"
+
+versions:
+  "15":
+    image: postgres:15
+  "16":
+    image: postgres:16
+  "17":
+    image: postgres:17
+
+defaults:
+  ports:
+    - "5432:5432"
+  restart: unless-stopped
