@@ -164,39 +164,36 @@ pub fn cli_logic() -> Result<(), DevinitError> {
             // 1. Built-in registry works without the backend.
             // 2. Previously downloaded recipes work offline.
             // 3. Unknown recipes are fetched from the backend.
-
-            let is_builtin = crate::service_registry::builtin_recipe(&name).is_some();
-
-            // An unsupported version of a known built-in service
-            // must not silently fall back to the backend.
-            if is_builtin
-                && crate::service_registry::builtin_recipe_version(
-                    &name,
-                    version.map(String::as_str),
-                )
-                .is_none()
-            {
-                let available = crate::service_registry::supported_versions(&name)
-                    .map(|versions| versions.join(", "))
-                    .unwrap_or_else(|| "default version only".into());
-
-                return Err(DevinitError::ConfigurationError(format!(
-                    "Unsupported version for {name}. Available: {available}"
-                )));
-            }
-
             let requested_version = version.map(String::as_str);
 
-            let recipe = if let Some(recipe) =
-                crate::service_registry::builtin_recipe_version(&name, requested_version)
-            {
+            // Installed YAML recipes have priority over legacy
+            // built-in definitions and downloaded recipes.
+            let packaged =
+                crate::service_registry::packaged_recipe_version(&name, requested_version)
+                    .map_err(DevinitError::FileIOError)?;
+
+            let recipe = if let Some(recipe) = packaged {
                 recipe
+            } else if crate::service_registry::builtin_recipe(&name).is_some() {
+                // Transitional compatibility for services not yet
+                // migrated to YAML definitions.
+                crate::service_registry::builtin_recipe_version(&name, requested_version)
+                    .ok_or_else(|| {
+                        let available = crate::service_registry::supported_versions(&name)
+                            .map(|versions| versions.join(", "))
+                            .unwrap_or_else(|| "default version only".to_string());
+
+                        DevinitError::ConfigurationError(format!(
+                            "Unsupported version for {name}. Available: {available}"
+                        ))
+                    })?
             } else if let Some(recipe) =
                 crate::service_registry::cached_recipe_version(&cwd, &name, requested_version)
                     .map_err(DevinitError::FileIOError)?
             {
                 recipe
             } else {
+                // Keep the existing remote backend implementation below.
                 // The existing backend API does not yet support
                 // selecting a recipe version.
                 if requested_version.is_some() {

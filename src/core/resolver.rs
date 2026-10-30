@@ -133,53 +133,54 @@ pub fn resolve_document(document: &mut Value, project_root: &Path) -> Result<(),
     Ok(())
 }
 
-/// Resolves a service from the built-in registry or local cache.
+/// Resolves a service using the installed YAML registry,
+/// legacy built-in definitions, or the local recipe cache.
 ///
-/// The built-in registry is authoritative for supported
-/// built-in versions. Unknown services require a cached recipe.
+/// Installed YAML definitions take priority over cached recipes.
+/// Legacy built-in definitions are used only during migration.
+/// Unknown services may be resolved from the local cache.
 pub fn resolve_recipe(
     project_root: &Path,
     name: &str,
     version: Option<&str>,
 ) -> Result<RecipeCompose, DevinitError> {
-    // Prefer service definitions distributed as YAML files.
+    let name = name.trim().to_ascii_lowercase();
+
+    // 1. Installed YAML definitions are authoritative.
     //
-    // Invalid registry files and unsupported versions must produce
-    // explicit errors rather than silently falling back to Rust defaults.
-    if let Some(packaged_recipe) = service_registry::packaged_recipe_version(name, version)
+    // A cached recipe must never silently override an
+    // installed built-in service definition.
+    if let Some(recipe) = service_registry::packaged_recipe_version(&name, version)
         .map_err(DevinitError::FileIOError)?
     {
-        let normalized_name = name.trim().to_ascii_lowercase();
-
-        let cached =
-            service_registry::cached_recipe_version(project_root, &normalized_name, version)
-                .map_err(DevinitError::FileIOError)?;
-
-        return Ok(cached.unwrap_or(packaged_recipe));
+        return Ok(recipe);
     }
 
-    let builtin = service_registry::builtin_recipe(name);
-
-    if builtin.is_some() {
-        let expected =
-            service_registry::builtin_recipe_version(name, version).ok_or_else(|| {
-                configuration_error(format!(
-                    "Unsupported version '{version:?}' \
-                         for built-in service '{name}'"
-                ))
-            })?;
-
-        let cached = service_registry::cached_recipe_version(project_root, name, version)
-            .map_err(DevinitError::FileIOError)?;
-
-        return Ok(cached.unwrap_or(expected));
+    // 2. Legacy built-in definitions remain available
+    // during the YAML registry migration.
+    //
+    // These will be removed after all built-in services
+    // have been migrated to external YAML files.
+    if service_registry::builtin_recipe(&name).is_some() {
+        return service_registry::builtin_recipe_version(&name, version).ok_or_else(|| {
+            configuration_error(format!(
+                "Unsupported version '{}' for built-in service '{}'",
+                version.unwrap_or("default"),
+                name
+            ))
+        });
     }
 
-    service_registry::cached_recipe_version(project_root, name, version)
+    // 3. Cached recipes are only used for services that
+    // are not provided by the installed built-in registry.
+    //
+    // Remote recipes must be explicitly added beforehand.
+    service_registry::cached_recipe_version(project_root, &name, version)
         .map_err(DevinitError::FileIOError)?
         .ok_or_else(|| {
             DevinitError::ServiceNotFound(format!(
-                "{name} (version: {})",
+                "{} (version: {})",
+                name,
                 version.unwrap_or("default")
             ))
         })
