@@ -22,3 +22,12 @@ defaults:
   volumes:
     - "grafana_data:/var/lib/grafana"
   restart: unless-stopped
+
+  directories:
+    - dir: grafana/provisioning/datasources
+      files:
+        - name: default.yml
+          mount: /etc/grafana/provisioning/datasources/default.yml
+          content: |
+            apiVersion: 1
+            datasources: []

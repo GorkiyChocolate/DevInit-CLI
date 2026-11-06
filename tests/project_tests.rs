@@ -604,3 +604,76 @@ services:
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn compile_supports_custom_service_directories() {
+    use std::fs;
+
+    let project_dir =
+        std::env::temp_dir().join(format!("devinit-directories-e2e-{}", std::process::id()));
+
+    fs::create_dir_all(&project_dir).unwrap();
+
+    let compile_path = project_dir.join("compile.yaml");
+
+    fs::write(
+        &compile_path,
+        r#"
+services:
+  - name: prometheus
+    directories:
+      - dir: monitoring
+        files:
+          - prometheus.yml
+          - alerts.yml
+
+  - name: grafana
+    directories:
+      - dir: observability/grafana
+        files:
+          - default.yml
+"#,
+    )
+    .unwrap();
+
+    // Load using the actual registry and validation pipeline.
+    let spec =
+        devinit_cli_2::file_config::yaml_config::load_compile_with_registry(&compile_path).unwrap();
+
+    // Build a generation plan without filesystem writes.
+    let plan = devinit_cli_2::generator::build_generation_plan(&spec, &[]).unwrap();
+
+    let paths: Vec<_> = plan
+        .files()
+        .map(|file| file.relative_path.clone())
+        .collect();
+
+    assert_eq!(paths.len(), 4);
+
+    assert!(paths.contains(&std::path::PathBuf::from("monitoring/prometheus.yml")));
+
+    assert!(paths.contains(&std::path::PathBuf::from("monitoring/alerts.yml")));
+
+    assert!(paths.contains(&std::path::PathBuf::from(
+        "observability/grafana/default.yml"
+    )));
+
+    assert!(paths.contains(&std::path::PathBuf::from("docker-compose.yaml")));
+
+    let compose = plan
+        .files()
+        .find(|file| file.relative_path == std::path::Path::new("docker-compose.yaml"))
+        .unwrap();
+
+    assert!(
+        compose
+            .contents
+            .contains("./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro")
+    );
+
+    assert!(compose.contents.contains(
+        "./observability/grafana/default.yml:/etc/grafana/provisioning/datasources/default.yml:ro"
+    ));
+
+    fs::remove_dir_all(project_dir).unwrap();
+}

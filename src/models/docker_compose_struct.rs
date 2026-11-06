@@ -56,6 +56,21 @@ pub struct File {
     pub content: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceDirectory {
+    pub dir: String,
+    pub files: Vec<ServiceDirectoryFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceDirectoryFile {
+    pub name: String,
+    pub content: String,
+
+    #[serde(default)]
+    pub mount: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 enum FileInput {
