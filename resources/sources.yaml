@@ -1,0 +1,24 @@
+
+schema_version: 1
+
+# Approved upstream Docker image repositories.
+# Only maintainers should modify this file.
+#
+# Versions and tags are resolved from resources/services/*.yaml.
+# This file controls trusted download sources only.
+
+docker_images:
+  redis:
+    repository: docker.io/library/redis
+
+  postgresql:
+    repository: docker.io/library/postgres
+
+  kafka:
+    repository: docker.io/apache/kafka
+
+  prometheus:
+    repository: docker.io/prom/prometheus
+
+  grafana:
+    repository: docker.io/grafana/grafana

@@ -59,3 +59,5 @@ pub mod service_definitions;
 
 #[path = "core/service_paths.rs"]
 pub mod service_paths;
+
+pub mod downloader;

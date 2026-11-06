@@ -266,6 +266,18 @@ pub fn cli_logic() -> Result<(), DevinitError> {
 
     // Execute the handler matching the selected subcommand.
     match matches.subcommand() {
+        Some(("download", sub_matches)) => {
+            let name = sub_matches
+                .get_one::<String>("service")
+                .expect("Required service argument");
+
+            let image = crate::downloader::download(name)?;
+
+            println!("✓ Download complete");
+            println!("✓ Image: {image}");
+            println!("✓ Stored in Docker Engine");
+        }
+
         Some(("add", sub_matches)) => {
             let name = sub_matches
                 .get_one::<String>("service")

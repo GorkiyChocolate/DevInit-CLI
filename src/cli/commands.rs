@@ -3,7 +3,7 @@ use clap::{Arg, ArgAction, Command};
 /// Builds the top-level CLI command and its subcommands.
 pub fn build_cli() -> Command {
     Command::new("devinit")
-        .version("0.0.2")
+        .version("0.0.3")
         .author("Gorkiy")
         .about("Devinit CLI tool")
         .arg_required_else_help(true)
@@ -15,6 +15,7 @@ pub fn build_cli() -> Command {
         .subcommand(build_compile_cli())
         .subcommand(build_check_cli())
         .subcommand(build_test_cli())
+        .subcommand(build_download_cli())
 }
 
 /// Builds the service-add command.
@@ -120,4 +121,16 @@ fn build_test_cli() -> Command {
     Command::new("test")
         .about("testing")
         .arg(Arg::new("tester").help("test command"))
+}
+
+fn build_download_cli() -> Command {
+    Command::new("download")
+        .about("Download a service image from a verified official source")
+        .arg(
+            Arg::new("service")
+                .help("Service to download")
+                .required(true)
+                .index(1)
+                .value_parser(clap::value_parser!(String)),
+        )
 }
