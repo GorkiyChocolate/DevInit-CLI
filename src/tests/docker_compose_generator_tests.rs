@@ -92,3 +92,46 @@ fn rendering_preserves_named_volumes() {
 
     assert!(document["volumes"]["postgres_data"].as_mapping().is_some());
 }
+
+#[test]
+fn renders_discovered_docker_build() {
+    let builds = vec![DiscoveredBuild {
+        name: "backend".to_string(),
+        context: "./backend".to_string(),
+        dockerfile: "Dockerfile".to_string(),
+    }];
+
+    let yaml = render_docker_compose_with_builds(&[], &builds).unwrap();
+
+    let document: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+
+    assert_eq!(
+        document["services"]["backend"]["build"]["context"].as_str(),
+        Some("./backend"),
+    );
+
+    assert_eq!(
+        document["services"]["backend"]["build"]["dockerfile"].as_str(),
+        Some("Dockerfile"),
+    );
+
+    assert!(document["services"]["backend"].get("image").is_none());
+}
+
+#[test]
+fn rejects_duplicate_discovered_service_names() {
+    let builds = vec![
+        DiscoveredBuild {
+            name: "backend".to_string(),
+            context: "./backend".to_string(),
+            dockerfile: "Dockerfile".to_string(),
+        },
+        DiscoveredBuild {
+            name: "backend".to_string(),
+            context: "./other".to_string(),
+            dockerfile: "Dockerfile".to_string(),
+        },
+    ];
+
+    assert!(render_docker_compose_with_builds(&[], &builds).is_err());
+}

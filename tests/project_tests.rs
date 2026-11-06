@@ -234,6 +234,7 @@ fn generates_all_configured_targets() {
         ))],
         kubernetes: Some(deployment()),
         cicd: Some(pipeline),
+        docker_discovery: false,
     };
 
     let paths = generate(&spec, &output).expect("generation should succeed");
@@ -399,6 +400,7 @@ fn reports_empty_image_and_invalid_port() {
         services: vec![invalid],
         kubernetes: None,
         cicd: None,
+        docker_discovery: false,
     });
     let errors = result.expect_err("invalid service should fail");
     assert!(
@@ -430,6 +432,7 @@ fn reports_missing_and_circular_dependencies() {
         ],
         kubernetes: None,
         cicd: None,
+        docker_discovery: false,
     });
     let errors = result.expect_err("invalid dependencies should fail");
     assert!(
@@ -454,6 +457,7 @@ fn accepts_valid_services() {
         )))],
         kubernetes: None,
         cicd: None,
+        docker_discovery: false,
     });
     assert_eq!(result, Ok(()));
 }
@@ -676,4 +680,218 @@ services:
     ));
 
     fs::remove_dir_all(project_dir).unwrap();
+}
+
+#[test]
+fn compile_discovers_dockerfiles_and_merges_registry_services() {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let root =
+        std::env::temp_dir().join(format!("devinit-discovery-e2e-{}-{id}", std::process::id()));
+
+    fs::create_dir_all(root.join("backend")).unwrap();
+    fs::create_dir_all(root.join("frontend")).unwrap();
+
+    fs::write(root.join("backend/Dockerfile"), "FROM alpine:3.20\n").unwrap();
+
+    fs::write(root.join("frontend/Dockerfile"), "FROM alpine:3.20\n").unwrap();
+
+    fs::write(
+        root.join("compile.yaml"),
+        "services:\n  - docker: true\n  - name: redis\n",
+    )
+    .unwrap();
+
+    let generated = devinit_cli_2::cli::cli_logic::compile_at_with_options(
+        &root.join("compile.yaml"),
+        &root,
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(generated.len(), 1);
+
+    let compose = fs::read_to_string(root.join("docker-compose.yaml")).unwrap();
+
+    let yaml: serde_yaml::Value = serde_yaml::from_str(&compose).unwrap();
+
+    assert_eq!(
+        yaml["services"]["backend"]["build"]["context"].as_str(),
+        Some("./backend")
+    );
+
+    assert_eq!(
+        yaml["services"]["frontend"]["build"]["dockerfile"].as_str(),
+        Some("Dockerfile")
+    );
+
+    assert_eq!(yaml["services"]["redis"]["image"].as_str(), Some("redis:7"));
+
+    assert!(yaml["services"]["backend"].get("image").is_none());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn docker_discovery_rejects_explicit_service_conflict() {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "devinit-discovery-conflict-{}-{id}",
+        std::process::id()
+    ));
+
+    fs::create_dir_all(root.join("backend")).unwrap();
+
+    fs::write(root.join("backend/Dockerfile"), "FROM alpine:3.20\n").unwrap();
+
+    fs::write(
+        root.join("compile.yaml"),
+        r#"
+services:
+  - docker: true
+  - name: backend
+    image: nginx:alpine
+"#,
+    )
+    .unwrap();
+
+    let result = devinit_cli_2::cli::cli_logic::compile_at_with_options(
+        &root.join("compile.yaml"),
+        &root,
+        false,
+    );
+
+    let message = result.unwrap_err().to_string();
+
+    assert!(message.contains("backend"));
+    assert!(message.contains("conflicts"));
+
+    assert!(!root.join("docker-compose.yaml").exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn docker_discovery_rebases_build_context_for_output_directory() {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let root =
+        std::env::temp_dir().join(format!("devinit-build-context-{}-{id}", std::process::id()));
+
+    let output = root.join("generated");
+
+    fs::create_dir_all(root.join("backend")).unwrap();
+    fs::create_dir_all(&output).unwrap();
+
+    fs::write(root.join("backend/Dockerfile"), "FROM alpine:3.20\n").unwrap();
+
+    fs::write(root.join("compile.yaml"), "services:\n  - docker: true\n").unwrap();
+
+    devinit_cli_2::cli::cli_logic::compile_at_with_options(
+        &root.join("compile.yaml"),
+        &output,
+        false,
+    )
+    .unwrap();
+
+    let compose = fs::read_to_string(output.join("docker-compose.yaml")).unwrap();
+
+    let yaml: serde_yaml::Value = serde_yaml::from_str(&compose).unwrap();
+
+    assert_eq!(
+        yaml["services"]["backend"]["build"]["context"].as_str(),
+        Some("../backend")
+    );
+
+    assert_eq!(
+        yaml["services"]["backend"]["build"]["dockerfile"].as_str(),
+        Some("Dockerfile")
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn docker_discovery_rejects_missing_dockerfiles() {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "devinit-discovery-missing-{}-{id}",
+        std::process::id()
+    ));
+
+    fs::create_dir_all(&root).unwrap();
+
+    fs::write(
+        root.join("compile.yaml"),
+        "services:\n  - docker: true\n",
+    )
+    .unwrap();
+
+    let result =
+        devinit_cli_2::cli::cli_logic::compile_at_with_options(
+            &root.join("compile.yaml"),
+            &root,
+            false,
+        );
+
+    let error = result.unwrap_err().to_string();
+
+    assert!(error.contains("no Dockerfile"));
+    assert!(!root.join("docker-compose.yaml").exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn docker_discovery_rejects_duplicate_declarations() {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "devinit-discovery-duplicate-{}-{id}",
+        std::process::id()
+    ));
+
+    fs::create_dir_all(&root).unwrap();
+
+    fs::write(
+        root.join("compile.yaml"),
+        "services:\n  - docker: true\n  - docker: true\n",
+    )
+    .unwrap();
+
+    let result =
+        devinit_cli_2::cli::cli_logic::compile_at_with_options(
+            &root.join("compile.yaml"),
+            &root,
+            false,
+        );
+
+    let error = result.unwrap_err().to_string();
+
+    assert!(error.contains("only be declared once"));
+    assert!(!root.join("docker-compose.yaml").exists());
+
+    fs::remove_dir_all(root).unwrap();
 }

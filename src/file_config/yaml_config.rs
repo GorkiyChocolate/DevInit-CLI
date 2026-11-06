@@ -61,6 +61,51 @@ fn append_recipes(recipes: &[RecipeCompose], path: &PathBuf) -> std::io::Result<
     Ok(())
 }
 
+fn extract_docker_discovery(document: &mut serde_yaml::Value) -> Result<bool, DevinitError> {
+    use serde_yaml::Value;
+
+    let Some(services) = document
+        .get_mut("services")
+        .and_then(Value::as_sequence_mut)
+    else {
+        return Ok(false);
+    };
+
+    let mut requested = false;
+    let mut remaining = Vec::with_capacity(services.len());
+
+    for (index, service) in std::mem::take(services).into_iter().enumerate() {
+        let Some(mapping) = service.as_mapping() else {
+            remaining.push(service);
+            continue;
+        };
+
+        let Some(docker) = mapping.get(Value::String("docker".to_string())) else {
+            remaining.push(service);
+            continue;
+        };
+
+        if mapping.len() != 1 || docker.as_bool() != Some(true) {
+            return Err(DevinitError::ConfigurationError(format!(
+                "services[{index}]: Docker discovery must \
+                     use exactly '- docker: true'"
+            )));
+        }
+
+        if requested {
+            return Err(DevinitError::ConfigurationError(
+                "Docker discovery may only be declared once".to_string(),
+            ));
+        }
+
+        requested = true;
+    }
+
+    *services = remaining;
+
+    Ok(requested)
+}
+
 /// Loads a compile specification and resolves registry recipes.
 ///
 /// Pipeline:
@@ -89,6 +134,8 @@ pub fn load_compile_with_registry(path: &Path) -> Result<CompileSpec, DevinitErr
 
     crate::presets::expand_infrastructure_presets(&mut document, project_root)?;
 
+    let docker_discovery = extract_docker_discovery(&mut document)?;
+
     // Validate input declarations before resolution.
     crate::validator::project_validator::validate_declarations(&document).map_err(|message| {
         DevinitError::ValidationErrors(vec![ValidationError {
@@ -112,5 +159,8 @@ pub fn load_compile_with_registry(path: &Path) -> Result<CompileSpec, DevinitErr
         },
     )?;
 
-    Ok(serde_yaml::from_value(document)?)
+    let mut spec: CompileSpec = serde_yaml::from_value(document)?;
+    spec.docker_discovery = docker_discovery;
+
+    Ok(spec)
 }

@@ -25,6 +25,7 @@ fn check(items: Vec<CompileService>) -> Vec<ValidationError> {
         services: items,
         kubernetes: None,
         cicd: None,
+        docker_discovery: false,
     };
 
     let mut errors = Vec::new();
@@ -96,6 +97,7 @@ fn spec(items: Vec<CompileService>) -> CompileSpec {
         services: items,
         kubernetes: None,
         cicd: None,
+        docker_discovery: false,
     }
 }
 

@@ -111,17 +111,48 @@ fn walk_dir(dir: &Path, ignored: &HashSet<&str>, results: &mut Vec<PathBuf>) -> 
     Ok(())
 }
 
-/// Finds the project root and returns all matching Dockerfile paths.
-pub fn find_all_dockerfiles() -> io::Result<Vec<PathBuf>> {
-    let current_dir = env::current_dir()?;
+/// Discovers Dockerfiles inside an explicitly selected project root.
+///
+/// The result is sorted for deterministic generation.
+/// Symbolic links and ignored directories are not traversed.
+pub fn find_dockerfiles_in(root: &Path) -> io::Result<Vec<PathBuf>> {
+    let root = fs::canonicalize(root)?;
 
-    // Use the current directory when no project root marker is found.
-    let root_dir = find_project_root(&current_dir).unwrap_or(current_dir);
+    if !root.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "Docker discovery root is not a directory: {}",
+                root.display()
+            ),
+        ));
+    }
 
-    let ignored_set: HashSet<&str> = IGNORED_DIRS.iter().copied().collect();
+    let ignored: HashSet<&str> = IGNORED_DIRS.iter().copied().collect();
+
     let mut dockerfiles = Vec::new();
 
-    walk_dir(&root_dir, &ignored_set, &mut dockerfiles)?;
+    walk_dir(&root, &ignored, &mut dockerfiles)?;
+
+    // Stable ordering makes generated output reproducible.
+    dockerfiles.sort();
 
     Ok(dockerfiles)
 }
+
+/// Legacy convenience API.
+///
+/// Uses the automatically detected project root.
+/// New compiler integration should call find_dockerfiles_in()
+/// with the directory containing compile.yaml instead.
+pub fn find_all_dockerfiles() -> io::Result<Vec<PathBuf>> {
+    let current_dir = env::current_dir()?;
+
+    let root = find_project_root(&current_dir).unwrap_or(current_dir);
+
+    find_dockerfiles_in(&root)
+}
+
+#[cfg(test)]
+#[path = "../tests/docker_finder_tests.rs"]
+mod tests;

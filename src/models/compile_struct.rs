@@ -14,6 +14,10 @@ pub struct CompileSpec {
     pub kubernetes: Option<Deployment>,
     /// Optionally defines a CI/CD pipeline.
     pub cicd: Option<Pipeline>,
+
+    /// Enables automatic Dockerfile discovery.
+    #[serde(skip)]
+    pub docker_discovery: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
