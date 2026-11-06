@@ -8,6 +8,7 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 use std::process::Command;
+pub mod binary;
 
 const SOURCES_SCHEMA_VERSION: u32 = 1;
 
@@ -16,6 +17,15 @@ const SOURCES_SCHEMA_VERSION: u32 = 1;
 struct DownloadSources {
     schema_version: u32,
     docker_images: BTreeMap<String, DockerImageSource>,
+    #[serde(default)]
+    cli_tools: BTreeMap<String, CliToolSource>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CliToolSource {
+    release_url: String,
+    download_base: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,6 +67,7 @@ fn parse_sources(contents: &str) -> io::Result<DownloadSources> {
         ));
     }
 
+    // Validate Docker image repositories.
     for (name, source) in &sources.docker_images {
         if name.is_empty()
             || !name.bytes().all(|value| {
@@ -73,8 +84,7 @@ fn parse_sources(contents: &str) -> io::Result<DownloadSources> {
 
         let Some(repository) = source.repository.strip_prefix("docker.io/") else {
             return Err(invalid_source(format!(
-                "Service '{name}' must use an explicit \
-                 docker.io repository"
+                "Service '{name}' must use an explicit docker.io repository"
             )));
         };
 
@@ -101,14 +111,47 @@ fn parse_sources(contents: &str) -> io::Result<DownloadSources> {
         }
     }
 
+    // Validate approved CLI tool sources.
+    for (name, source) in &sources.cli_tools {
+        let expected = match name.as_str() {
+            "kubectl" => (
+                "https://dl.k8s.io/release/stable.txt",
+                "https://dl.k8s.io/release",
+            ),
+            "helm" => (
+                "https://api.github.com/repos/helm/helm/releases/latest",
+                "https://get.helm.sh",
+            ),
+            _ => {
+                return Err(invalid_source(format!(
+                    "Unsupported CLI tool in sources.yaml: '{name}'"
+                )));
+            }
+        };
+
+        if source.release_url != expected.0 || source.download_base != expected.1 {
+            return Err(invalid_source(format!(
+                "Unapproved download source for CLI tool '{name}'"
+            )));
+        }
+    }
+
     Ok(sources)
 }
 
 fn load_sources() -> io::Result<DownloadSources> {
-    let path = sources_path()?;
-    let contents = fs::read_to_string(&path)?;
+    // Explicit external service registry override.
+    if std::env::var_os("DEVINIT_SERVICES_DIR").is_some() {
+        let path = sources_path()?;
+        let contents = fs::read_to_string(&path)?;
 
-    parse_sources(&contents)
+        return parse_sources(&contents);
+    }
+
+    // Sources bundled into the DevInit executable.
+    const EMBEDDED_SOURCES: &str = include_str!("../resources/sources.yaml");
+
+    parse_sources(EMBEDDED_SOURCES)
 }
 
 /// Normalize supported Docker Hub image references.

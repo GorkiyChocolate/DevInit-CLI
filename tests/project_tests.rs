@@ -839,18 +839,13 @@ fn docker_discovery_rejects_missing_dockerfiles() {
 
     fs::create_dir_all(&root).unwrap();
 
-    fs::write(
-        root.join("compile.yaml"),
-        "services:\n  - docker: true\n",
-    )
-    .unwrap();
+    fs::write(root.join("compile.yaml"), "services:\n  - docker: true\n").unwrap();
 
-    let result =
-        devinit_cli_2::cli::cli_logic::compile_at_with_options(
-            &root.join("compile.yaml"),
-            &root,
-            false,
-        );
+    let result = devinit_cli_2::cli::cli_logic::compile_at_with_options(
+        &root.join("compile.yaml"),
+        &root,
+        false,
+    );
 
     let error = result.unwrap_err().to_string();
 
@@ -881,12 +876,11 @@ fn docker_discovery_rejects_duplicate_declarations() {
     )
     .unwrap();
 
-    let result =
-        devinit_cli_2::cli::cli_logic::compile_at_with_options(
-            &root.join("compile.yaml"),
-            &root,
-            false,
-        );
+    let result = devinit_cli_2::cli::cli_logic::compile_at_with_options(
+        &root.join("compile.yaml"),
+        &root,
+        false,
+    );
 
     let error = result.unwrap_err().to_string();
 
@@ -894,4 +888,53 @@ fn docker_discovery_rejects_duplicate_declarations() {
     assert!(!root.join("docker-compose.yaml").exists());
 
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn list_command_shows_packaged_services() {
+    use std::process::Command;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_devinit"))
+        .arg("list")
+        .output()
+        .expect("Failed to execute devinit list");
+
+    assert!(
+        output.status.success(),
+        "devinit list failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    for service in ["redis", "postgresql", "kafka", "prometheus", "grafana"] {
+        assert!(stdout.contains(service), "Missing service: {service}");
+    }
+
+    assert!(stdout.contains("Total: "));
+}
+
+#[test]
+fn installed_cli_lists_embedded_services_without_override() {
+    use std::process::Command;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_devinit"))
+        .arg("list")
+        .env_remove("DEVINIT_SERVICES_DIR")
+        .current_dir(std::env::temp_dir())
+        .output()
+        .expect("Failed to execute DevInit");
+
+    assert!(
+        output.status.success(),
+        "DevInit failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("redis"));
+    assert!(stdout.contains("postgresql"));
+    assert!(stdout.contains("kafka"));
+    assert!(stdout.contains("Total: 12 services"));
 }

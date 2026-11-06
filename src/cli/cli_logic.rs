@@ -269,13 +269,25 @@ pub fn cli_logic() -> Result<(), DevinitError> {
         Some(("download", sub_matches)) => {
             let name = sub_matches
                 .get_one::<String>("service")
-                .expect("Required service argument");
+                .expect("Required service argument")
+                .trim()
+                .to_ascii_lowercase();
 
-            let image = crate::downloader::download(name)?;
+            if crate::downloader::binary::is_supported_tool(&name) {
+                let (path, version) = crate::downloader::binary::download(&name)?;
 
-            println!("✓ Download complete");
-            println!("✓ Image: {image}");
-            println!("✓ Stored in Docker Engine");
+                println!("✓ Download complete");
+                println!("✓ Tool: {name}");
+                println!("✓ Version: {version}");
+                println!("✓ SHA-256 verified");
+                println!("✓ Saved to: {}", path.display());
+            } else {
+                let image = crate::downloader::download(&name)?;
+
+                println!("✓ Download complete");
+                println!("✓ Image: {image}");
+                println!("✓ Stored in Docker Engine");
+            }
         }
 
         Some(("add", sub_matches)) => {
@@ -348,14 +360,24 @@ pub fn cli_logic() -> Result<(), DevinitError> {
             println!("✓ Cache: {}", cache_path.display());
         }
 
-        Some(("list", sub_matches)) => {
-            let service_type = sub_matches.get_one::<String>("type");
-            let page = sub_matches.get_one::<String>("page");
+        Some(("list", _)) => {
+            let registry = crate::service_registry::packaged_definitions()
+                .map_err(DevinitError::FileIOError)?;
 
-            println!(
-                "Fetching list... Type: {:?}, Page: {:?}",
-                service_type, page
-            );
+            if registry.is_empty() {
+                println!("No built-in services found.");
+            } else {
+                println!("Available DevInit services:\n");
+
+                for (name, service) in &registry {
+                    println!(
+                        "  {:<16} {:<10} {}",
+                        name, service.default_version, service.description
+                    );
+                }
+
+                println!("\nTotal: {} services", registry.len());
+            }
         }
 
         Some(("get", sub_matches)) => {

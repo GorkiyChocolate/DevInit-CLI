@@ -305,6 +305,68 @@ pub fn load_service_registry(directory: &Path) -> io::Result<BTreeMap<String, Se
     Ok(registry)
 }
 
+pub fn load_embedded_service_registry() -> io::Result<BTreeMap<String, ServiceDefinition>> {
+    const SERVICES: &[(&str, &str)] = &[
+        ("ec2", include_str!("../../resources/services/ec2.yaml")),
+        (
+            "elasticsearch",
+            include_str!("../../resources/services/elasticsearch.yaml"),
+        ),
+        (
+            "grafana",
+            include_str!("../../resources/services/grafana.yaml"),
+        ),
+        ("kafka", include_str!("../../resources/services/kafka.yaml")),
+        (
+            "mariadb",
+            include_str!("../../resources/services/mariadb.yaml"),
+        ),
+        (
+            "mongodb",
+            include_str!("../../resources/services/mongodb.yaml"),
+        ),
+        ("mysql", include_str!("../../resources/services/mysql.yaml")),
+        (
+            "postgresql",
+            include_str!("../../resources/services/postgresql.yaml"),
+        ),
+        (
+            "prometheus",
+            include_str!("../../resources/services/prometheus.yaml"),
+        ),
+        (
+            "rabbitmq",
+            include_str!("../../resources/services/rabbitmq.yaml"),
+        ),
+        ("redis", include_str!("../../resources/services/redis.yaml")),
+        ("s3", include_str!("../../resources/services/s3.yaml")),
+    ];
+
+    let mut registry = BTreeMap::new();
+
+    for (name, contents) in SERVICES {
+        let definition: ServiceDefinition = serde_yaml::from_str(contents)
+            .map_err(|error| invalid_data(format!("Invalid embedded service '{name}': {error}")))?;
+
+        definition.validate()?;
+
+        if definition.name != *name {
+            return Err(invalid_data(format!(
+                "Embedded service '{name}' declares name '{}'",
+                definition.name
+            )));
+        }
+
+        if registry.insert((*name).to_owned(), definition).is_some() {
+            return Err(invalid_data(format!(
+                "Duplicate embedded service: '{name}'"
+            )));
+        }
+    }
+
+    Ok(registry)
+}
+
 #[cfg(test)]
 #[path = "../tests/service_definitions_tests.rs"]
 mod tests;

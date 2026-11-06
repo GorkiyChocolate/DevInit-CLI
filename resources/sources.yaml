@@ -22,3 +22,12 @@ docker_images:
 
   grafana:
     repository: docker.io/grafana/grafana
+
+cli_tools:
+  kubectl:
+    release_url: https://dl.k8s.io/release/stable.txt
+    download_base: https://dl.k8s.io/release
+
+  helm:
+    release_url: https://api.github.com/repos/helm/helm/releases/latest
+    download_base: https://get.helm.sh

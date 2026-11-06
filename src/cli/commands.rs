@@ -45,20 +45,7 @@ fn build_add_cli() -> Command {
 
 /// Builds the service-list command.
 fn build_list_cli() -> Command {
-    Command::new("list")
-        .about("List of services")
-        .arg(
-            Arg::new("type")
-                .short('t')
-                .long("type")
-                .help("Type of services"),
-        )
-        .arg(
-            Arg::new("page")
-                .short('p')
-                .long("page")
-                .help("Page of lists"),
-        )
+    Command::new("list").about("List available built-in DevInit services")
 }
 
 /// Builds the configuration-get command.

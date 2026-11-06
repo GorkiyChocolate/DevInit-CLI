@@ -315,10 +315,10 @@ fn apply_directory_overrides(
             let old_source = format!("./{}", template.path);
 
             for volume in &original_volumes {
-                if let Some((source, target)) = volume.split_once(':') {
-                    if source == old_source {
-                        volumes.push(format!("./{destination}:{target}"));
-                    }
+                if let Some((source, target)) = volume.split_once(':')
+                    && source == old_source
+                {
+                    volumes.push(format!("./{destination}:{target}"));
                 }
             }
         }
