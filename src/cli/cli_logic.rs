@@ -22,12 +22,126 @@ pub fn compile_at(input_path: &Path, output_dir: &Path) -> Result<Vec<PathBuf>, 
     compile_at_with_options(input_path, output_dir, false)
 }
 
+fn discover_docker_builds(
+    project_root: &Path,
+) -> Result<Vec<generator::docker_compose_generator::DiscoveredBuild>, DevinitError> {
+    use generator::docker_compose_generator::DiscoveredBuild;
+    use std::collections::BTreeSet;
+
+    let root = fs::canonicalize(project_root).map_err(DevinitError::FileIOError)?;
+
+    let dockerfiles = crate::docker::docker_finder::find_dockerfiles_in(&root)
+        .map_err(DevinitError::FileIOError)?;
+
+    if dockerfiles.is_empty() {
+        return Err(DevinitError::ConfigurationError(
+            "Docker discovery was requested, but no Dockerfile \
+             or Containerfile was found in the project"
+                .to_string(),
+        ));
+    }
+
+    let mut names = BTreeSet::new();
+    let mut builds = Vec::new();
+
+    for dockerfile_path in dockerfiles {
+        let parent = dockerfile_path.parent().ok_or_else(|| {
+            DevinitError::ConfigurationError(format!(
+                "Cannot determine directory for {}",
+                dockerfile_path.display()
+            ))
+        })?;
+
+        let relative_dir = parent.strip_prefix(&root).map_err(|_| {
+            DevinitError::ConfigurationError(
+                "Discovered Dockerfile is outside the project".to_string(),
+            )
+        })?;
+
+        let dockerfile_name = dockerfile_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| {
+                DevinitError::ConfigurationError("Dockerfile name is not valid UTF-8".to_string())
+            })?;
+
+        let name_source = if relative_dir.as_os_str().is_empty() {
+            root.file_name().ok_or_else(|| {
+                DevinitError::ConfigurationError("Cannot determine root service name".to_string())
+            })?
+        } else {
+            relative_dir.file_name().ok_or_else(|| {
+                DevinitError::ConfigurationError("Cannot determine service name".to_string())
+            })?
+        };
+
+        let name = name_source
+            .to_str()
+            .ok_or_else(|| {
+                DevinitError::ConfigurationError(
+                    "Service directory name is not valid UTF-8".to_string(),
+                )
+            })?
+            .to_ascii_lowercase();
+
+        let valid_name = !name.is_empty()
+            && name.len() <= 80
+            && name
+                .bytes()
+                .next()
+                .is_some_and(|value| value.is_ascii_alphanumeric())
+            && name
+                .bytes()
+                .all(|value| value.is_ascii_alphanumeric() || value == b'-' || value == b'_');
+
+        if !valid_name {
+            return Err(DevinitError::ConfigurationError(format!(
+                "Cannot use '{name}' as a Docker service name. \
+                     Rename the directory using letters, numbers, \
+                     hyphens or underscores."
+            )));
+        }
+
+        if !names.insert(name.clone()) {
+            return Err(DevinitError::ConfigurationError(format!(
+                "Multiple Dockerfiles resolve to service \
+                     '{name}'. Use a unique service directory \
+                     or remove the ambiguous Dockerfile."
+            )));
+        }
+
+        let context = if relative_dir.as_os_str().is_empty() {
+            ".".to_string()
+        } else {
+            format!("./{}", relative_dir.to_string_lossy().replace('\\', "/"))
+        };
+
+        builds.push(DiscoveredBuild {
+            name,
+            context,
+            dockerfile: dockerfile_name.to_string(),
+        });
+    }
+
+    Ok(builds)
+}
+
 /// Loads, validates and renders all infrastructure files in memory.
 ///
 /// This is the shared pipeline for compile, check and dry-run.
-fn build_plan(input_path: &Path) -> Result<GenerationPlan, DevinitError> {
+fn build_plan(input_path: &Path, output_dir: &Path) -> Result<GenerationPlan, DevinitError> {
     // Resolve services, global presets and CI/CD configuration.
     let spec = load_compile_with_registry(input_path)?;
+
+    let mut builds = if spec.docker_discovery {
+        discover_docker_builds(compile_project_root(input_path))?
+    } else {
+        Vec::new()
+    };
+
+    if !builds.is_empty() {
+        rebase_docker_builds(&mut builds, compile_project_root(input_path), output_dir)?;
+    }
 
     // Resolve custom Kubernetes manifests and their presets.
     let manifests = crate::k8s_manifests::load_manifests(input_path)?;
@@ -36,12 +150,14 @@ fn build_plan(input_path: &Path) -> Result<GenerationPlan, DevinitError> {
     let ir = crate::ir::ResolvedCompileSpec::build(spec).map_err(DevinitError::ValidationErrors)?;
 
     // Render generated files without writing them.
-    generator::build_generation_plan(ir.spec(), &manifests).map_err(DevinitError::from)
+
+    generator::build_generation_plan_with_builds(ir.spec(), &manifests, &builds)
+        .map_err(DevinitError::from)
 }
 
 /// Validates a project without writing infrastructure files.
 pub fn check_at(input_path: &Path) -> Result<usize, DevinitError> {
-    let plan = build_plan(input_path)?;
+    let plan = build_plan(input_path, compile_project_root(input_path))?;
 
     Ok(plan.len())
 }
@@ -77,7 +193,7 @@ pub fn dry_run_at(
     output_dir: &Path,
     force: bool,
 ) -> Result<Vec<PlannedFile>, DevinitError> {
-    let plan = build_plan(input_path)?;
+    let plan = build_plan(input_path, output_dir)?;
 
     // Validate output paths, including symlink protection.
     // force=true here only permits inspection of existing regular
@@ -125,7 +241,7 @@ pub fn compile_at_with_options(
     output_dir: &Path,
     force: bool,
 ) -> Result<Vec<PathBuf>, DevinitError> {
-    let plan = build_plan(input_path)?;
+    let plan = build_plan(input_path, output_dir)?;
 
     // Preserve existing overwrite protection.
     plan.preflight(output_dir, force)?;
@@ -150,6 +266,30 @@ pub fn cli_logic() -> Result<(), DevinitError> {
 
     // Execute the handler matching the selected subcommand.
     match matches.subcommand() {
+        Some(("download", sub_matches)) => {
+            let name = sub_matches
+                .get_one::<String>("service")
+                .expect("Required service argument")
+                .trim()
+                .to_ascii_lowercase();
+
+            if crate::downloader::binary::is_supported_tool(&name) {
+                let (path, version) = crate::downloader::binary::download(&name)?;
+
+                println!("✓ Download complete");
+                println!("✓ Tool: {name}");
+                println!("✓ Version: {version}");
+                println!("✓ SHA-256 verified");
+                println!("✓ Saved to: {}", path.display());
+            } else {
+                let image = crate::downloader::download(&name)?;
+
+                println!("✓ Download complete");
+                println!("✓ Image: {image}");
+                println!("✓ Stored in Docker Engine");
+            }
+        }
+
         Some(("add", sub_matches)) => {
             let name = sub_matches
                 .get_one::<String>("service")
@@ -220,14 +360,24 @@ pub fn cli_logic() -> Result<(), DevinitError> {
             println!("✓ Cache: {}", cache_path.display());
         }
 
-        Some(("list", sub_matches)) => {
-            let service_type = sub_matches.get_one::<String>("type");
-            let page = sub_matches.get_one::<String>("page");
+        Some(("list", _)) => {
+            let registry = crate::service_registry::packaged_definitions()
+                .map_err(DevinitError::FileIOError)?;
 
-            println!(
-                "Fetching list... Type: {:?}, Page: {:?}",
-                service_type, page
-            );
+            if registry.is_empty() {
+                println!("No built-in services found.");
+            } else {
+                println!("Available DevInit services:\n");
+
+                for (name, service) in &registry {
+                    println!(
+                        "  {:<16} {:<10} {}",
+                        name, service.default_version, service.description
+                    );
+                }
+
+                println!("\nTotal: {} services", registry.len());
+            }
         }
 
         Some(("get", sub_matches)) => {
@@ -414,3 +564,129 @@ pub fn cli_logic() -> Result<(), DevinitError> {
 #[cfg(test)]
 #[path = "../tests/cli_logic_tests.rs"]
 mod tests;
+
+fn compile_project_root(input_path: &Path) -> &Path {
+    input_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+fn normalized_absolute_path(path: &Path) -> Result<PathBuf, DevinitError> {
+    use std::path::Component;
+
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()
+            .map_err(DevinitError::FileIOError)?
+            .join(path)
+    };
+
+    let mut result = PathBuf::new();
+
+    for component in absolute.components() {
+        match component {
+            Component::Prefix(prefix) => {
+                result.push(prefix.as_os_str());
+            }
+            Component::RootDir => {
+                result.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                result.pop();
+            }
+            Component::Normal(name) => {
+                result.push(name);
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Returns a relative path from `base_dir` to `target`.
+fn relative_path_between(base_dir: &Path, target: &Path) -> Result<PathBuf, DevinitError> {
+    use std::path::Component;
+
+    let base = normalized_absolute_path(base_dir)?;
+    let target = normalized_absolute_path(target)?;
+
+    let base_parts: Vec<_> = base.components().collect();
+    let target_parts: Vec<_> = target.components().collect();
+
+    let common = base_parts
+        .iter()
+        .zip(target_parts.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let mut relative = PathBuf::new();
+
+    for component in &base_parts[common..] {
+        if matches!(component, Component::Normal(_)) {
+            relative.push("..");
+        }
+    }
+
+    for component in &target_parts[common..] {
+        relative.push(component.as_os_str());
+    }
+
+    if relative.as_os_str().is_empty() {
+        relative.push(".");
+    }
+
+    Ok(relative)
+}
+
+fn rebase_docker_builds(
+    builds: &mut [generator::docker_compose_generator::DiscoveredBuild],
+    project_root: &Path,
+    output_dir: &Path,
+) -> Result<(), DevinitError> {
+    for build in builds {
+        let source_context = project_root.join(&build.context);
+
+        let relative = relative_path_between(output_dir, &source_context)?;
+
+        let context = relative.to_string_lossy().replace('\\', "/");
+
+        build.context = if context == "." || context.starts_with("../") {
+            context
+        } else {
+            format!("./{context}")
+        };
+    }
+
+    Ok(())
+}
+#[cfg(test)]
+mod docker_discovery_path_tests {
+    use super::*;
+
+    #[test]
+    fn relative_compile_file_uses_current_directory() {
+        assert_eq!(
+            compile_project_root(Path::new("compile.yaml")),
+            Path::new(".")
+        );
+    }
+
+    #[test]
+    fn nested_compile_file_uses_parent_directory() {
+        assert_eq!(
+            compile_project_root(Path::new("project/compile.yaml")),
+            Path::new("project")
+        );
+    }
+
+    #[test]
+    fn absolute_compile_file_uses_its_directory() {
+        assert_eq!(
+            compile_project_root(Path::new("/tmp/project/compile.yaml")),
+            Path::new("/tmp/project")
+        );
+    }
+}

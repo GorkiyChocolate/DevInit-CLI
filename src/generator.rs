@@ -92,26 +92,36 @@ pub fn generate_with_options(
 }
 
 /// Builds one generation plan for all supported output formats.
-///
 /// All YAML documents are rendered in memory.
 /// No filesystem writes occur during this operation.
 pub fn build_generation_plan(
     spec: &CompileSpec,
     custom_manifests: &[KubernetesManifest],
 ) -> Result<GenerationPlan, GenerationError> {
+    build_generation_plan_with_builds(spec, custom_manifests, &[])
+}
+
+/// Builds a complete generation plan, optionally including
+/// applications discovered from existing Dockerfiles.
+///
+/// This function preserves service configuration files,
+/// Kubernetes manifests and CI/CD generation.
+pub fn build_generation_plan_with_builds(
+    spec: &CompileSpec,
+    custom_manifests: &[KubernetesManifest],
+    builds: &[docker_compose_generator::DiscoveredBuild],
+) -> Result<GenerationPlan, GenerationError> {
     let mut plan = GenerationPlan::new();
 
-    // Docker Compose
-    if !spec.services.is_empty() {
-        plan.add(docker_compose_generator::plan_docker_compose(
+    // Docker Compose: explicit services + discovered builds.
+    if !spec.services.is_empty() || !builds.is_empty() {
+        plan.add(docker_compose_generator::plan_docker_compose_with_builds(
             &spec.services,
+            builds,
         )?)?;
     }
 
-    // Additional configuration files declared by service recipes.
-    //
-    // These files participate in the same generation plan
-    // as Docker Compose, Kubernetes and CI/CD outputs.
+    // Additional configuration files from service recipes.
     for service in &spec.services {
         let recipe = service.to_recipe();
 
@@ -122,20 +132,19 @@ pub fn build_generation_plan(
         }
     }
 
-    // Legacy Kubernetes Deployment and optional Service
+    // Kubernetes Deployment and optional Service.
     if let Some(deployment) = &spec.kubernetes {
         for file in k8s_generator::plan_kubernetes(deployment)? {
             plan.add(file)?;
         }
     }
 
-    // User-defined Kubernetes manifests:
-    // both Raw Mode and Template Mode.
+    // Custom Kubernetes manifests.
     for file in plan_custom_manifests(custom_manifests)? {
         plan.add(file)?;
     }
 
-    // GitHub Actions or GitLab CI
+    // CI/CD pipeline.
     if let Some(pipeline) = &spec.cicd {
         plan.add(cicd_generator::plan_cicd(pipeline)?)?;
     }

@@ -166,3 +166,134 @@ fn unsupported_builtin_version_is_not_loaded_from_cache() {
 
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn overrides_prometheus_directories_and_mounts() {
+    let mut document: serde_yaml::Value = serde_yaml::from_str(
+        r#"
+services:
+  - name: prometheus
+    directories:
+      - dir: monitoring
+        files:
+          - prometheus.yml
+          - alerts.yml
+"#,
+    )
+    .unwrap();
+
+    resolve_document(&mut document, std::path::Path::new(".")).unwrap();
+
+    let spec: crate::models::compile_struct::CompileSpec =
+        serde_yaml::from_value(document).unwrap();
+
+    let recipe = spec.services[0].to_recipe();
+    let files = recipe.files.unwrap();
+    let volumes = recipe.volumes.unwrap();
+
+    assert!(files.iter().any(|file| {
+        file.path == "monitoring/prometheus.yml" && file.content.contains("scrape_interval")
+    }));
+
+    assert!(
+        files
+            .iter()
+            .any(|file| { file.path == "monitoring/alerts.yml" })
+    );
+
+    assert!(
+        volumes
+            .contains(&"./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro".to_string())
+    );
+
+    assert!(volumes.contains(&"./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro".to_string()));
+
+    assert!(volumes.contains(&"prometheus_data:/prometheus".to_string()));
+
+    assert!(
+        !volumes
+            .iter()
+            .any(|volume| { volume.starts_with("./prometheus/") })
+    );
+}
+
+#[test]
+fn rejects_unknown_directory_file() {
+    let mut document: serde_yaml::Value = serde_yaml::from_str(
+        r#"
+services:
+  - name: prometheus
+    directories:
+      - dir: monitoring
+        files:
+          - unknown.yml
+"#,
+    )
+    .unwrap();
+
+    let error = resolve_document(&mut document, std::path::Path::new(".")).unwrap_err();
+
+    let message = error.to_string();
+
+    assert!(message.contains("unknown.yml"));
+    assert!(message.contains("Available files"));
+}
+
+#[test]
+fn rejects_unsafe_directory_override() {
+    let mut document: serde_yaml::Value = serde_yaml::from_str(
+        r#"
+services:
+  - name: prometheus
+    directories:
+      - dir: ../outside
+        files:
+          - prometheus.yml
+"#,
+    )
+    .unwrap();
+
+    assert!(resolve_document(&mut document, std::path::Path::new(".")).is_err());
+}
+
+#[test]
+fn rejects_missing_required_service_file() {
+    let mut document: serde_yaml::Value = serde_yaml::from_str(
+        r#"
+services:
+  - name: prometheus
+    directories:
+      - dir: monitoring
+        files:
+          - prometheus.yml
+"#,
+    )
+    .unwrap();
+
+    let error = resolve_document(&mut document, std::path::Path::new(".")).unwrap_err();
+
+    let message = error.to_string();
+
+    assert!(message.contains("alerts.yml"));
+    assert!(message.contains("missing required"));
+    assert!(message.contains("directories"));
+}
+
+#[test]
+fn rejects_disabling_required_service_files() {
+    let mut document: serde_yaml::Value = serde_yaml::from_str(
+        r#"
+services:
+  - name: prometheus
+    directories: []
+"#,
+    )
+    .unwrap();
+
+    let error = resolve_document(&mut document, std::path::Path::new(".")).unwrap_err();
+
+    let message = error.to_string();
+
+    assert!(message.contains("prometheus.yml"));
+    assert!(message.contains("alerts.yml"));
+}

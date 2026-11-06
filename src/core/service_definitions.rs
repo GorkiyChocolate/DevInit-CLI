@@ -1,5 +1,7 @@
 use crate::models::docker_compose_struct::File;
 use crate::models::docker_compose_struct::RecipeCompose;
+use crate::models::docker_compose_struct::ServiceDirectory;
+use std::collections::BTreeSet;
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -43,6 +45,9 @@ pub struct ServiceDefaults {
         deserialize_with = "crate::models::docker_compose_struct::deserialize_recipe_files"
     )]
     pub files: Option<Vec<File>>,
+
+    #[serde(default)]
+    pub directories: Vec<ServiceDirectory>,
 }
 
 fn invalid_data(message: impl Into<String>) -> io::Error {
@@ -54,6 +59,90 @@ fn valid_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+fn resolve_service_directories(
+    directories: &[ServiceDirectory],
+    files: &mut Vec<File>,
+    volumes: &mut Vec<String>,
+) -> io::Result<()> {
+    let mut paths = BTreeSet::new();
+
+    for file in files.iter() {
+        paths.insert(file.path.clone());
+    }
+
+    for directory in directories {
+        let dir = Path::new(&directory.dir);
+
+        if directory.dir.trim().is_empty()
+            || directory.dir.contains('\\')
+            || directory.dir.contains(':')
+            || !dir
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(invalid_data(format!(
+                "Invalid service directory: '{}'",
+                directory.dir
+            )));
+        }
+
+        for file in &directory.files {
+            let name = Path::new(&file.name);
+
+            if file.name.trim().is_empty()
+                || file.name.contains('\\')
+                || file.name.contains(':')
+                || name.components().count() != 1
+                || !name
+                    .components()
+                    .all(|component| matches!(component, std::path::Component::Normal(_)))
+            {
+                return Err(invalid_data(format!(
+                    "Invalid service file name: '{}'",
+                    file.name
+                )));
+            }
+
+            let path = dir.join(name);
+            let path = path.to_string_lossy().into_owned();
+
+            if !paths.insert(path.clone()) {
+                return Err(invalid_data(format!(
+                    "Duplicate service configuration file: '{path}'"
+                )));
+            }
+
+            files.push(File {
+                path: path.clone(),
+                content: file.content.clone(),
+            });
+
+            if let Some(target) = &file.mount {
+                if !target.starts_with('/')
+                    || target.contains(':')
+                    || target.contains('\\')
+                    || target.split('/').any(|part| part == "..")
+                    || target.ends_with('/')
+                {
+                    return Err(invalid_data(format!(
+                        "Invalid container mount target: '{target}'"
+                    )));
+                }
+
+                let mount = format!("./{path}:{target}:ro");
+
+                if volumes.iter().any(|existing| existing == &mount) {
+                    return Err(invalid_data(format!("Duplicate service mount: '{mount}'")));
+                }
+
+                volumes.push(mount);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 impl ServiceDefinition {
@@ -122,18 +211,27 @@ impl ServiceDefinition {
             ))
         })?;
 
+        let mut files = self.defaults.files.clone().unwrap_or_default();
+        let mut volumes = self.defaults.volumes.clone().unwrap_or_default();
+
+        resolve_service_directories(&self.defaults.directories, &mut files, &mut volumes)?;
+
         Ok(RecipeCompose {
             name: self.name.clone(),
             description: Some(self.description.clone()),
             image: definition.image.clone(),
             ports: self.defaults.ports.clone(),
             environment: self.defaults.environment.clone(),
-            volumes: self.defaults.volumes.clone(),
+            volumes: if volumes.is_empty() {
+                None
+            } else {
+                Some(volumes)
+            },
             networks: self.defaults.networks.clone(),
             depends_on: self.defaults.depends_on.clone(),
             restart: self.defaults.restart.clone(),
             command: self.defaults.command.clone(),
-            files: self.defaults.files.clone(),
+            files: if files.is_empty() { None } else { Some(files) },
             env: None,
             notes: None,
         })
@@ -202,6 +300,68 @@ pub fn load_service_registry(directory: &Path) -> io::Result<BTreeMap<String, Se
             "No service definitions found in {}",
             directory.display()
         )));
+    }
+
+    Ok(registry)
+}
+
+pub fn load_embedded_service_registry() -> io::Result<BTreeMap<String, ServiceDefinition>> {
+    const SERVICES: &[(&str, &str)] = &[
+        ("ec2", include_str!("../../resources/services/ec2.yaml")),
+        (
+            "elasticsearch",
+            include_str!("../../resources/services/elasticsearch.yaml"),
+        ),
+        (
+            "grafana",
+            include_str!("../../resources/services/grafana.yaml"),
+        ),
+        ("kafka", include_str!("../../resources/services/kafka.yaml")),
+        (
+            "mariadb",
+            include_str!("../../resources/services/mariadb.yaml"),
+        ),
+        (
+            "mongodb",
+            include_str!("../../resources/services/mongodb.yaml"),
+        ),
+        ("mysql", include_str!("../../resources/services/mysql.yaml")),
+        (
+            "postgresql",
+            include_str!("../../resources/services/postgresql.yaml"),
+        ),
+        (
+            "prometheus",
+            include_str!("../../resources/services/prometheus.yaml"),
+        ),
+        (
+            "rabbitmq",
+            include_str!("../../resources/services/rabbitmq.yaml"),
+        ),
+        ("redis", include_str!("../../resources/services/redis.yaml")),
+        ("s3", include_str!("../../resources/services/s3.yaml")),
+    ];
+
+    let mut registry = BTreeMap::new();
+
+    for (name, contents) in SERVICES {
+        let definition: ServiceDefinition = serde_yaml::from_str(contents)
+            .map_err(|error| invalid_data(format!("Invalid embedded service '{name}': {error}")))?;
+
+        definition.validate()?;
+
+        if definition.name != *name {
+            return Err(invalid_data(format!(
+                "Embedded service '{name}' declares name '{}'",
+                definition.name
+            )));
+        }
+
+        if registry.insert((*name).to_owned(), definition).is_some() {
+            return Err(invalid_data(format!(
+                "Duplicate embedded service: '{name}'"
+            )));
+        }
     }
 
     Ok(registry)

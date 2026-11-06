@@ -1,8 +1,12 @@
 use crate::errors::DevinitError;
+use crate::models::docker_compose_struct::File;
 use crate::models::docker_compose_struct::RecipeCompose;
 use crate::service_registry;
 
+use serde::Deserialize;
 use serde_yaml::{Mapping, Value};
+use std::collections::BTreeSet;
+use std::path::Component;
 use std::path::Path;
 
 const OVERRIDE_FIELDS: &[&str] = &[
@@ -18,6 +22,13 @@ const OVERRIDE_FIELDS: &[&str] = &[
     "env",
     "notes",
 ];
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectorySelection {
+    dir: String,
+    files: Vec<String>,
+}
 
 fn key(name: &str) -> Value {
     Value::String(name.to_owned())
@@ -108,6 +119,7 @@ pub fn resolve_document(document: &mut Value, project_root: &Path) -> Result<(),
 
             if field_name == "name"
                 || field_name == "version"
+                || field_name == "directories"
                 || OVERRIDE_FIELDS.contains(&field_name)
             {
                 continue;
@@ -120,11 +132,22 @@ pub fn resolve_document(document: &mut Value, project_root: &Path) -> Result<(),
 
         let version_ref = version.as_deref();
 
-        // Resolve the immutable base recipe.
         let recipe = resolve_recipe(project_root, &name, version_ref)?;
 
-        // Apply explicitly declared overrides.
-        let resolved = apply_overrides(recipe, mapping, index)?;
+        if field(mapping, "directories").is_some()
+            && (field(mapping, "files").is_some() || field(mapping, "volumes").is_some())
+        {
+            return Err(configuration_error(format!(
+                "services[{index}]: directories cannot be combined \
+                with files or volumes overrides"
+            )));
+        }
+
+        let mut resolved = apply_overrides(recipe, mapping, index)?;
+
+        if let Some(directories) = field(mapping, "directories") {
+            resolved = apply_directory_overrides(resolved, directories, index)?;
+        }
 
         // Replace the shorthand declaration with a full recipe.
         *service = serde_yaml::to_value(resolved)?;
@@ -162,6 +185,181 @@ pub fn resolve_recipe(
                 version.unwrap_or("default")
             ))
         })
+}
+
+fn apply_directory_overrides(
+    mut recipe: RecipeCompose,
+    value: &Value,
+    index: usize,
+) -> Result<RecipeCompose, DevinitError> {
+    let selections: Vec<DirectorySelection> = serde_yaml::from_value(value.clone())
+        .map_err(|error| configuration_error(format!("services[{index}].directories: {error}")))?;
+
+    let service_name = recipe.name.clone();
+    let original_files = recipe.files.take().unwrap_or_default();
+    let original_volumes = recipe.volumes.take().unwrap_or_default();
+
+    let mut generated_sources = BTreeSet::new();
+
+    for file in &original_files {
+        generated_sources.insert(format!("./{}", file.path));
+    }
+
+    // Retain volumes that are not associated with generated files.
+    let mut volumes: Vec<String> = original_volumes
+        .iter()
+        .filter(|volume| {
+            let source = volume.split(':').next().unwrap_or_default();
+            !generated_sources.contains(source)
+        })
+        .cloned()
+        .collect();
+
+    let mut files = Vec::<File>::new();
+    let mut used_names = BTreeSet::new();
+    let mut used_paths = BTreeSet::new();
+
+    for selection in selections {
+        let directory = Path::new(&selection.dir);
+
+        if selection.dir.trim().is_empty()
+            || selection.dir.contains('\\')
+            || selection.dir.contains(':')
+            || !directory
+                .components()
+                .all(|part| matches!(part, Component::Normal(_)))
+        {
+            return Err(configuration_error(format!(
+                "services[{index}]: invalid directory '{}'. \
+                 Use a relative path inside the project.",
+                selection.dir
+            )));
+        }
+
+        for name in selection.files {
+            let filename = Path::new(&name);
+
+            if name.trim().is_empty()
+                || name.contains('\\')
+                || name.contains(':')
+                || filename.components().count() != 1
+                || !filename
+                    .components()
+                    .all(|part| matches!(part, Component::Normal(_)))
+            {
+                return Err(configuration_error(format!(
+                    "services[{index}]: invalid file name '{name}'"
+                )));
+            }
+
+            if !used_names.insert(name.clone()) {
+                return Err(configuration_error(format!(
+                    "services[{index}]: file '{name}' \
+                     was selected more than once"
+                )));
+            }
+
+            let templates: Vec<&File> = original_files
+                .iter()
+                .filter(|file| {
+                    Path::new(&file.path)
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        == Some(name.as_str())
+                })
+                .collect();
+
+            let template = match templates.as_slice() {
+                [] => {
+                    let available = original_files
+                        .iter()
+                        .filter_map(|file| {
+                            Path::new(&file.path)
+                                .file_name()
+                                .and_then(|value| value.to_str())
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    return Err(configuration_error(format!(
+                        "Service '{service_name}' has no file '{name}'. \
+                         Available files: {available}"
+                    )));
+                }
+                [template] => *template,
+                _ => {
+                    return Err(configuration_error(format!(
+                        "Service '{service_name}' has multiple \
+                         templates named '{name}'. \
+                         Use a unique file name in the recipe."
+                    )));
+                }
+            };
+
+            let destination = directory.join(&name);
+            let destination = destination.to_string_lossy().into_owned();
+
+            if !used_paths.insert(destination.clone()) {
+                return Err(configuration_error(format!(
+                    "services[{index}]: duplicate output path '{destination}'"
+                )));
+            }
+
+            // Reuse content from the built-in recipe.
+            files.push(File {
+                path: destination.clone(),
+                content: template.content.clone(),
+            });
+
+            // Relocate only mounts belonging to this template.
+            let old_source = format!("./{}", template.path);
+
+            for volume in &original_volumes {
+                if let Some((source, target)) = volume.split_once(':')
+                    && source == old_source
+                {
+                    volumes.push(format!("./{destination}:{target}"));
+                }
+            }
+        }
+    }
+
+    // Every file provided by a built-in recipe is required
+    // when directories are explicitly overridden.
+    //
+    // Users may relocate files, but cannot silently remove
+    // files referenced by the default service configuration.
+    let missing_files: Vec<String> = original_files
+        .iter()
+        .filter_map(|file| {
+            let name = Path::new(&file.path).file_name()?.to_str()?;
+
+            if used_names.contains(name) {
+                None
+            } else {
+                Some(name.to_string())
+            }
+        })
+        .collect();
+
+    if !missing_files.is_empty() {
+        return Err(configuration_error(format!(
+            "Service '{service_name}': missing required configuration files: {}. \
+             Include these files in directories, or remove the \
+             directories field to use the default layout.",
+            missing_files.join(", ")
+        )));
+    }
+
+    recipe.files = if files.is_empty() { None } else { Some(files) };
+
+    recipe.volumes = if volumes.is_empty() {
+        None
+    } else {
+        Some(volumes)
+    };
+
+    Ok(recipe)
 }
 
 /// Applies user overrides to a resolved service recipe.

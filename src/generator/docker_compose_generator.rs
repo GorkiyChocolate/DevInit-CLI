@@ -7,6 +7,19 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone)]
+pub struct DiscoveredBuild {
+    pub name: String,
+    pub context: String,
+    pub dockerfile: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ComposeBuild {
+    context: String,
+    dockerfile: String,
+}
+
 /// Generates a Docker Compose file for the requested services.
 pub fn generate_docker_compose(
     services: &[CompileService],
@@ -35,6 +48,13 @@ pub fn generate_docker_compose_with_options(
 
 /// Converts Compose services into YAML without filesystem writes.
 pub fn render_docker_compose(services: &[CompileService]) -> Result<String, GenerationError> {
+    render_docker_compose_with_builds(services, &[])
+}
+
+pub fn render_docker_compose_with_builds(
+    services: &[CompileService],
+    builds: &[DiscoveredBuild],
+) -> Result<String, GenerationError> {
     let mut compose_services = BTreeMap::new();
 
     for service in services {
@@ -43,12 +63,40 @@ pub fn render_docker_compose(services: &[CompileService]) -> Result<String, Gene
         compose_services.insert(recipe.name.clone(), ComposeService::from_recipe(&recipe));
     }
 
+    for discovered in builds {
+        if discovered.name.trim().is_empty() || compose_services.contains_key(&discovered.name) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "Docker discovery service name is empty or \
+                     conflicts with another service: '{}'",
+                    discovered.name
+                ),
+            )
+            .into());
+        }
+
+        compose_services.insert(
+            discovered.name.clone(),
+            ComposeService::from_build(discovered),
+        );
+    }
+
     let compose = DockerComposeFile {
         services: compose_services,
         volumes: collect_named_volumes(services),
     };
 
     Ok(serde_yaml::to_string(&compose)?)
+}
+
+pub fn plan_docker_compose_with_builds(
+    services: &[CompileService],
+    builds: &[DiscoveredBuild],
+) -> Result<GeneratedFile, GenerationError> {
+    let yaml = render_docker_compose_with_builds(services, builds)?;
+
+    GeneratedFile::new("docker-compose.yaml", yaml)
 }
 
 /// Prepares a Docker Compose file without writing it.
@@ -67,33 +115,35 @@ struct DockerComposeFile {
 }
 
 #[derive(Debug, Serialize)]
-/// Represents one serialized Compose service.
 struct ComposeService {
-    /// Stores the container image.
-    image: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// Stores published ports.
+    image: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    build: Option<ComposeBuild>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     ports: Option<Vec<String>>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// Stores environment entries.
     environment: Option<Vec<String>>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// Stores volume mounts.
     volumes: Option<Vec<String>>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// Stores attached networks.
     networks: Option<Vec<String>>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// Stores service dependencies.
     depends_on: Option<Vec<String>>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// Stores the restart policy.
     restart: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// Stores the container command.
     command: Option<Vec<String>>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// Stores generated metadata labels.
     labels: Option<BTreeMap<String, String>>,
 }
 
@@ -104,7 +154,8 @@ impl ComposeService {
             BTreeMap::from([("com.devinit.description".to_string(), description.clone())])
         });
         Self {
-            image: recipe.image.clone(),
+            image: Some(recipe.image.clone()),
+            build: None,
             ports: recipe.ports.clone(),
             environment: recipe.environment.clone(),
             volumes: recipe.volumes.clone(),
@@ -113,6 +164,24 @@ impl ComposeService {
             restart: recipe.restart.clone(),
             command: recipe.command.clone(),
             labels,
+        }
+    }
+
+    fn from_build(discovered: &DiscoveredBuild) -> Self {
+        Self {
+            image: None,
+            build: Some(ComposeBuild {
+                context: discovered.context.clone(),
+                dockerfile: discovered.dockerfile.clone(),
+            }),
+            ports: None,
+            environment: None,
+            volumes: None,
+            networks: None,
+            depends_on: None,
+            restart: None,
+            command: None,
+            labels: None,
         }
     }
 }

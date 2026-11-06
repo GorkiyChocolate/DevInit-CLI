@@ -3,7 +3,7 @@ use clap::{Arg, ArgAction, Command};
 /// Builds the top-level CLI command and its subcommands.
 pub fn build_cli() -> Command {
     Command::new("devinit")
-        .version("0.0.2")
+        .version(env!("CARGO_PKG_VERSION"))
         .author("Gorkiy")
         .about("Devinit CLI tool")
         .arg_required_else_help(true)
@@ -15,6 +15,7 @@ pub fn build_cli() -> Command {
         .subcommand(build_compile_cli())
         .subcommand(build_check_cli())
         .subcommand(build_test_cli())
+        .subcommand(build_download_cli())
 }
 
 /// Builds the service-add command.
@@ -44,20 +45,7 @@ fn build_add_cli() -> Command {
 
 /// Builds the service-list command.
 fn build_list_cli() -> Command {
-    Command::new("list")
-        .about("List of services")
-        .arg(
-            Arg::new("type")
-                .short('t')
-                .long("type")
-                .help("Type of services"),
-        )
-        .arg(
-            Arg::new("page")
-                .short('p')
-                .long("page")
-                .help("Page of lists"),
-        )
+    Command::new("list").about("List available built-in DevInit services")
 }
 
 /// Builds the configuration-get command.
@@ -120,4 +108,16 @@ fn build_test_cli() -> Command {
     Command::new("test")
         .about("testing")
         .arg(Arg::new("tester").help("test command"))
+}
+
+fn build_download_cli() -> Command {
+    Command::new("download")
+        .about("Download a Docker image or CLI tool from a verified official source")
+        .arg(
+            Arg::new("service")
+                .help("Service or CLI tool to download")
+                .required(true)
+                .index(1)
+                .value_parser(clap::value_parser!(String)),
+        )
 }

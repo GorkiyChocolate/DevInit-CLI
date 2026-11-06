@@ -234,6 +234,7 @@ fn generates_all_configured_targets() {
         ))],
         kubernetes: Some(deployment()),
         cicd: Some(pipeline),
+        docker_discovery: false,
     };
 
     let paths = generate(&spec, &output).expect("generation should succeed");
@@ -399,6 +400,7 @@ fn reports_empty_image_and_invalid_port() {
         services: vec![invalid],
         kubernetes: None,
         cicd: None,
+        docker_discovery: false,
     });
     let errors = result.expect_err("invalid service should fail");
     assert!(
@@ -430,6 +432,7 @@ fn reports_missing_and_circular_dependencies() {
         ],
         kubernetes: None,
         cicd: None,
+        docker_discovery: false,
     });
     let errors = result.expect_err("invalid dependencies should fail");
     assert!(
@@ -454,6 +457,7 @@ fn accepts_valid_services() {
         )))],
         kubernetes: None,
         cicd: None,
+        docker_discovery: false,
     });
     assert_eq!(result, Ok(()));
 }
@@ -603,4 +607,334 @@ services:
     assert!(compose.contains("127.0.0.1:8080:8080"));
 
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn compile_supports_custom_service_directories() {
+    use std::fs;
+
+    let project_dir =
+        std::env::temp_dir().join(format!("devinit-directories-e2e-{}", std::process::id()));
+
+    fs::create_dir_all(&project_dir).unwrap();
+
+    let compile_path = project_dir.join("compile.yaml");
+
+    fs::write(
+        &compile_path,
+        r#"
+services:
+  - name: prometheus
+    directories:
+      - dir: monitoring
+        files:
+          - prometheus.yml
+          - alerts.yml
+
+  - name: grafana
+    directories:
+      - dir: observability/grafana
+        files:
+          - default.yml
+"#,
+    )
+    .unwrap();
+
+    // Load using the actual registry and validation pipeline.
+    let spec =
+        devinit_cli_2::file_config::yaml_config::load_compile_with_registry(&compile_path).unwrap();
+
+    // Build a generation plan without filesystem writes.
+    let plan = devinit_cli_2::generator::build_generation_plan(&spec, &[]).unwrap();
+
+    let paths: Vec<_> = plan
+        .files()
+        .map(|file| file.relative_path.clone())
+        .collect();
+
+    assert_eq!(paths.len(), 4);
+
+    assert!(paths.contains(&std::path::PathBuf::from("monitoring/prometheus.yml")));
+
+    assert!(paths.contains(&std::path::PathBuf::from("monitoring/alerts.yml")));
+
+    assert!(paths.contains(&std::path::PathBuf::from(
+        "observability/grafana/default.yml"
+    )));
+
+    assert!(paths.contains(&std::path::PathBuf::from("docker-compose.yaml")));
+
+    let compose = plan
+        .files()
+        .find(|file| file.relative_path == std::path::Path::new("docker-compose.yaml"))
+        .unwrap();
+
+    assert!(
+        compose
+            .contents
+            .contains("./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro")
+    );
+
+    assert!(compose.contents.contains(
+        "./observability/grafana/default.yml:/etc/grafana/provisioning/datasources/default.yml:ro"
+    ));
+
+    fs::remove_dir_all(project_dir).unwrap();
+}
+
+#[test]
+fn compile_discovers_dockerfiles_and_merges_registry_services() {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let root =
+        std::env::temp_dir().join(format!("devinit-discovery-e2e-{}-{id}", std::process::id()));
+
+    fs::create_dir_all(root.join("backend")).unwrap();
+    fs::create_dir_all(root.join("frontend")).unwrap();
+
+    fs::write(root.join("backend/Dockerfile"), "FROM alpine:3.20\n").unwrap();
+
+    fs::write(root.join("frontend/Dockerfile"), "FROM alpine:3.20\n").unwrap();
+
+    fs::write(
+        root.join("compile.yaml"),
+        "services:\n  - docker: true\n  - name: redis\n",
+    )
+    .unwrap();
+
+    let generated = devinit_cli_2::cli::cli_logic::compile_at_with_options(
+        &root.join("compile.yaml"),
+        &root,
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(generated.len(), 1);
+
+    let compose = fs::read_to_string(root.join("docker-compose.yaml")).unwrap();
+
+    let yaml: serde_yaml::Value = serde_yaml::from_str(&compose).unwrap();
+
+    assert_eq!(
+        yaml["services"]["backend"]["build"]["context"].as_str(),
+        Some("./backend")
+    );
+
+    assert_eq!(
+        yaml["services"]["frontend"]["build"]["dockerfile"].as_str(),
+        Some("Dockerfile")
+    );
+
+    assert_eq!(yaml["services"]["redis"]["image"].as_str(), Some("redis:7"));
+
+    assert!(yaml["services"]["backend"].get("image").is_none());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn docker_discovery_rejects_explicit_service_conflict() {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "devinit-discovery-conflict-{}-{id}",
+        std::process::id()
+    ));
+
+    fs::create_dir_all(root.join("backend")).unwrap();
+
+    fs::write(root.join("backend/Dockerfile"), "FROM alpine:3.20\n").unwrap();
+
+    fs::write(
+        root.join("compile.yaml"),
+        r#"
+services:
+  - docker: true
+  - name: backend
+    image: nginx:alpine
+"#,
+    )
+    .unwrap();
+
+    let result = devinit_cli_2::cli::cli_logic::compile_at_with_options(
+        &root.join("compile.yaml"),
+        &root,
+        false,
+    );
+
+    let message = result.unwrap_err().to_string();
+
+    assert!(message.contains("backend"));
+    assert!(message.contains("conflicts"));
+
+    assert!(!root.join("docker-compose.yaml").exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn docker_discovery_rebases_build_context_for_output_directory() {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let root =
+        std::env::temp_dir().join(format!("devinit-build-context-{}-{id}", std::process::id()));
+
+    let output = root.join("generated");
+
+    fs::create_dir_all(root.join("backend")).unwrap();
+    fs::create_dir_all(&output).unwrap();
+
+    fs::write(root.join("backend/Dockerfile"), "FROM alpine:3.20\n").unwrap();
+
+    fs::write(root.join("compile.yaml"), "services:\n  - docker: true\n").unwrap();
+
+    devinit_cli_2::cli::cli_logic::compile_at_with_options(
+        &root.join("compile.yaml"),
+        &output,
+        false,
+    )
+    .unwrap();
+
+    let compose = fs::read_to_string(output.join("docker-compose.yaml")).unwrap();
+
+    let yaml: serde_yaml::Value = serde_yaml::from_str(&compose).unwrap();
+
+    assert_eq!(
+        yaml["services"]["backend"]["build"]["context"].as_str(),
+        Some("../backend")
+    );
+
+    assert_eq!(
+        yaml["services"]["backend"]["build"]["dockerfile"].as_str(),
+        Some("Dockerfile")
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn docker_discovery_rejects_missing_dockerfiles() {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "devinit-discovery-missing-{}-{id}",
+        std::process::id()
+    ));
+
+    fs::create_dir_all(&root).unwrap();
+
+    fs::write(root.join("compile.yaml"), "services:\n  - docker: true\n").unwrap();
+
+    let result = devinit_cli_2::cli::cli_logic::compile_at_with_options(
+        &root.join("compile.yaml"),
+        &root,
+        false,
+    );
+
+    let error = result.unwrap_err().to_string();
+
+    assert!(error.contains("no Dockerfile"));
+    assert!(!root.join("docker-compose.yaml").exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn docker_discovery_rejects_duplicate_declarations() {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "devinit-discovery-duplicate-{}-{id}",
+        std::process::id()
+    ));
+
+    fs::create_dir_all(&root).unwrap();
+
+    fs::write(
+        root.join("compile.yaml"),
+        "services:\n  - docker: true\n  - docker: true\n",
+    )
+    .unwrap();
+
+    let result = devinit_cli_2::cli::cli_logic::compile_at_with_options(
+        &root.join("compile.yaml"),
+        &root,
+        false,
+    );
+
+    let error = result.unwrap_err().to_string();
+
+    assert!(error.contains("only be declared once"));
+    assert!(!root.join("docker-compose.yaml").exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn list_command_shows_packaged_services() {
+    use std::process::Command;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_devinit"))
+        .arg("list")
+        .output()
+        .expect("Failed to execute devinit list");
+
+    assert!(
+        output.status.success(),
+        "devinit list failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    for service in ["redis", "postgresql", "kafka", "prometheus", "grafana"] {
+        assert!(stdout.contains(service), "Missing service: {service}");
+    }
+
+    assert!(stdout.contains("Total: "));
+}
+
+#[test]
+fn installed_cli_lists_embedded_services_without_override() {
+    use std::process::Command;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_devinit"))
+        .arg("list")
+        .env_remove("DEVINIT_SERVICES_DIR")
+        .current_dir(std::env::temp_dir())
+        .output()
+        .expect("Failed to execute DevInit");
+
+    assert!(
+        output.status.success(),
+        "DevInit failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("redis"));
+    assert!(stdout.contains("postgresql"));
+    assert!(stdout.contains("kafka"));
+    assert!(stdout.contains("Total: 12 services"));
 }

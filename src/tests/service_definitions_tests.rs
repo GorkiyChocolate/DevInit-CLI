@@ -424,3 +424,86 @@ fn resolves_ec2_localstack_from_yaml() {
 
     assert!(definition.to_recipe(Some("unknown")).is_err());
 }
+
+#[test]
+fn prometheus_directories_generate_files_and_mounts() {
+    let yaml = include_str!("../../resources/services/prometheus.yaml");
+
+    let definition: ServiceDefinition = serde_yaml::from_str(yaml).unwrap();
+
+    let recipe = definition.to_recipe(None).unwrap();
+
+    let files = recipe.files.unwrap();
+    let volumes = recipe.volumes.unwrap();
+
+    assert_eq!(files.len(), 2);
+
+    assert!(files.iter().any(|file| {
+        file.path == "prometheus/prometheus.yml" && file.content.contains("scrape_interval: 15s")
+    }));
+
+    assert!(
+        files
+            .iter()
+            .any(|file| { file.path == "prometheus/alerts.yml" })
+    );
+
+    assert!(
+        volumes
+            .contains(&"./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro".to_string())
+    );
+
+    assert!(volumes.contains(&"./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro".to_string()));
+
+    assert!(volumes.contains(&"prometheus_data:/prometheus".to_string()));
+}
+
+#[test]
+fn grafana_directories_generate_provisioning() {
+    let yaml = include_str!("../../resources/services/grafana.yaml");
+
+    let definition: ServiceDefinition = serde_yaml::from_str(yaml).unwrap();
+
+    let recipe = definition.to_recipe(None).unwrap();
+
+    let files = recipe.files.unwrap();
+    let volumes = recipe.volumes.unwrap();
+
+    assert!(files.iter().any(|file| {
+        file.path == "grafana/provisioning/datasources/default.yml"
+            && file.content.contains("apiVersion: 1")
+    }));
+
+    assert!(
+        volumes.contains(
+            &concat!(
+                "./grafana/provisioning/datasources/default.yml:",
+                "/etc/grafana/provisioning/datasources/default.yml:ro"
+            )
+            .to_string()
+        )
+    );
+}
+
+#[test]
+fn rejects_unsafe_service_directory() {
+    let yaml = r#"
+schema_version: 1
+name: example
+description: Example service
+default_version: "1"
+versions:
+  "1":
+    image: example:1
+defaults:
+  directories:
+    - dir: ../outside
+      files:
+        - name: config.yml
+          content: "test"
+"#;
+
+    let definition: ServiceDefinition = serde_yaml::from_str(yaml).unwrap();
+
+    assert!(definition.to_recipe(None).is_err());
+}

@@ -1,9 +1,10 @@
 use crate::models::docker_compose_struct::RecipeCompose;
 use crate::service_definitions::load_service_registry;
+use crate::service_definitions::{ServiceDefinition, load_embedded_service_registry};
 use crate::service_paths::find_services_directory;
-
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -20,8 +21,7 @@ pub fn packaged_recipe_version(
     name: &str,
     version: Option<&str>,
 ) -> io::Result<Option<RecipeCompose>> {
-    let directory = find_services_directory()?;
-    let registry = load_service_registry(&directory)?;
+    let registry = packaged_definitions()?;
 
     let normalized_name = name.trim().to_ascii_lowercase();
 
@@ -30,6 +30,17 @@ pub fn packaged_recipe_version(
     };
 
     definition.to_recipe(version).map(Some)
+}
+
+pub fn packaged_definitions() -> io::Result<BTreeMap<String, ServiceDefinition>> {
+    // Explicit override for development and custom installations.
+    if std::env::var_os("DEVINIT_SERVICES_DIR").is_some() {
+        let directory = find_services_directory()?;
+        return load_service_registry(&directory);
+    }
+
+    // Normal installation: use the YAML embedded in the executable.
+    load_embedded_service_registry()
 }
 
 fn valid_component(value: &str) -> bool {
