@@ -336,12 +336,13 @@ dependencies = [
 
 [[package]]
 name = "devinit_cli_2"
-version = "0.0.2"
+version = "0.0.4"
 dependencies = [
  "clap",
  "dotenvy",
  "flate2",
  "inquire",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",

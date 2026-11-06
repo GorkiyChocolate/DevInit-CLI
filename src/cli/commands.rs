@@ -3,7 +3,7 @@ use clap::{Arg, ArgAction, Command};
 /// Builds the top-level CLI command and its subcommands.
 pub fn build_cli() -> Command {
     Command::new("devinit")
-        .version("0.0.3")
+        .version(env!("CARGO_PKG_VERSION"))
         .author("Gorkiy")
         .about("Devinit CLI tool")
         .arg_required_else_help(true)
@@ -112,10 +112,10 @@ fn build_test_cli() -> Command {
 
 fn build_download_cli() -> Command {
     Command::new("download")
-        .about("Download a service image from a verified official source")
+        .about("Download a Docker image or CLI tool from a verified official source")
         .arg(
             Arg::new("service")
-                .help("Service to download")
+                .help("Service or CLI tool to download")
                 .required(true)
                 .index(1)
                 .value_parser(clap::value_parser!(String)),
