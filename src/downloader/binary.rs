@@ -12,7 +12,10 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::io::{Seek, SeekFrom};
+
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::OpenOptionsExt;
+
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -449,6 +452,7 @@ fn tools_directory() -> Result<PathBuf, DevinitError> {
     Ok(home.join(".local/share/devinit/tools"))
 }
 
+#[cfg(target_os = "linux")]
 fn open_partial_file(path: &Path, limit: u64) -> Result<(fs::File, u64), DevinitError> {
     let file = OpenOptions::new()
         .read(true)
@@ -475,6 +479,13 @@ fn open_partial_file(path: &Path, limit: u64) -> Result<(fs::File, u64), Devinit
     }
 
     Ok((file, metadata.len()))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn open_partial_file(_path: &Path, _limit: u64) -> Result<(fs::File, u64), DevinitError> {
+    Err(error(
+        "Resumable CLI tool downloads are currently supported on Linux only",
+    ))
 }
 
 fn save_binary(name: &str, bytes: &[u8]) -> Result<PathBuf, DevinitError> {
@@ -647,6 +658,7 @@ mod tests {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn partial_file_rejects_symlink() {
     use std::os::unix::fs::symlink;
@@ -667,6 +679,7 @@ fn partial_file_rejects_symlink() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn partial_file_preserves_existing_content() {
     let root = std::env::temp_dir().join(format!("devinit-part-existing-{}", std::process::id()));
