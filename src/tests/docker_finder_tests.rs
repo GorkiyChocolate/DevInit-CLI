@@ -28,8 +28,12 @@ fn discovers_multiple_dockerfiles_in_project() {
     let found = find_dockerfiles_in(&root).unwrap();
 
     assert_eq!(found.len(), 2);
-    assert!(found.contains(&root.join("backend/Dockerfile")));
-    assert!(found.contains(&root.join("frontend/Dockerfile.dev")));
+
+    let backend = root.join("backend/Dockerfile").canonicalize().unwrap();
+    let frontend = root.join("frontend/Dockerfile.dev").canonicalize().unwrap();
+
+    assert!(found.contains(&backend));
+    assert!(found.contains(&frontend));
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -48,7 +52,9 @@ fn ignores_dependency_and_build_directories() {
 
     let found = find_dockerfiles_in(&root).unwrap();
 
-    assert_eq!(found, vec![root.join("backend/Dockerfile")]);
+    let expected = root.join("backend/Dockerfile").canonicalize().unwrap();
+
+    assert_eq!(found, vec![expected]);
 
     fs::remove_dir_all(root).unwrap();
 }
