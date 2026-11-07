@@ -947,10 +947,8 @@ fn rejects_unknown_top_level_yaml_field() {
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
-        "devinit-unknown-field-{}-{id}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("devinit-unknown-field-{}-{id}", std::process::id()));
 
     fs::create_dir_all(&root).unwrap();
 
@@ -967,20 +965,14 @@ services:
     )
     .unwrap();
 
-    let result =
-        devinit_cli_2::file_config::yaml_config::load_compile_with_registry(
-            &compile_path,
-        );
+    let result = devinit_cli_2::file_config::yaml_config::load_compile_with_registry(&compile_path);
 
-    let error = result.expect_err(
-        "Unknown top-level YAML fields must be rejected",
-    );
+    let error = result.expect_err("Unknown top-level YAML fields must be rejected");
 
     let message = error.to_string();
 
     assert!(
-        message.contains("unknown field")
-            && message.contains("docker_discovery"),
+        message.contains("unknown field") && message.contains("docker_discovery"),
         "Unexpected error: {message}"
     );
 
