@@ -1,93 +1,113 @@
-# DevInit CLI v0.0.2 — User Guide
+# DevInit CLI — User Guide
 
-> Documentation draft based on tested DevInit CLI behavior. Verify the installation steps against release assets before publishing.
+**Version context:** `0.0.4` development baseline; documentation prepared for the planned v1.0.0 release candidate. Some commands remain experimental.
 
-DevInit is a CLI-oriented infrastructure configuration generator. It reads `compile.yaml`, validates the project, resolves supported service recipes and presets, and generates infrastructure configuration files.
+DevInit is a CLI-first generator for infrastructure configuration files. It reads `compile.yaml`, resolves built-in recipes and optional presets, checks supported rules, then writes Docker Compose, Kubernetes, and CI/CD configuration files. It does not deploy infrastructure.
 
-## Quick start
+## 1. Install
 
-1. Install a DevInit CLI binary appropriate for your operating system (release installers and archives are planned; do not assume they are published yet).
-2. Create `compile.yaml` in a project directory.
-3. Run `devinit check` to validate without writing generated files.
-4. Run `devinit compile --dry-run` to preview files and conflicts.
-5. Run `devinit compile` to generate files.
+Get packages from [GitHub Releases](https://github.com/GorkiyChocolate/DevInit-CLI/releases) when they are published. CI-generated artifacts do not necessarily constitute a published release.
 
-Example using built-in service recipes:
+**Linux x64:** unpack `devinit-linux-x64.tar.gz` into `~/.local/opt/devinit` and keep its `resources/services` directory alongside `devinit`:
+
+```bash
+mkdir -p ~/.local/opt/devinit
+tar -xzf devinit-linux-x64.tar.gz -C ~/.local/opt/devinit
+~/.local/opt/devinit/devinit --version
+~/.local/opt/devinit/devinit list
+```
+
+Optionally create a command symlink:
+
+```bash
+mkdir -p ~/.local/bin
+ln -s ~/.local/opt/devinit/devinit ~/.local/bin/devinit
+```
+
+Ensure `~/.local/bin` is on your `PATH`. This layout has been tested with both direct and symlink invocation. Do not copy just the executable into another folder while leaving all recipe files behind.
+
+**Windows x64:** use the portable ZIP or Inno Setup installer when published. Keep `devinit.exe` and `resources\services` together for portable use. In PowerShell, run `./devinit.exe --version` and `./devinit.exe list` from the extracted folder (Windows PowerShell accepts `.\devinit.exe`). Automatic `PATH` registration by the installer has not been confirmed.
+
+**Build from source:** use Rust with edition 2024 support and run `cargo build --release --locked`; keep registry resources accessible to the executable.
+
+## 2. First project
+
+Create a `compile.yaml`:
+
+```yaml
+services:
+  - name: backend
+    image: nginx:alpine
+    ports: ["8080:80"]
+  - name: redis
+    version: "7"
+```
+
+From the same folder:
+
+```bash
+devinit check
+devinit compile --dry-run
+devinit compile
+```
+
+The generated `docker-compose.yaml` contains the declared services and their resolved settings. Running `devinit compile` again will refuse to overwrite it. To preview changes, use `devinit compile --dry-run --force`; overwrite only deliberately with `devinit compile --force`.
+
+### PostgreSQL credentials
 
 ```yaml
 services:
   - name: postgresql
     version: "17"
-  - name: redis
-    version: "7"
 ```
 
-The generated Docker Compose file is `docker-compose.yaml`. The actual images and defaults are resolved from the installed registry recipes.
+The packaged recipe expects `POSTGRES_PASSWORD` when Compose resolves the output. Provide it via your local environment or a properly protected secrets workflow; never commit live credentials.
 
-## Commands
+## 3. Existing project: Dockerfile discovery
 
-| Command | Behavior |
-| --- | --- |
-| `devinit check` | Loads and validates the project and builds the generation plan without writing files. |
-| `devinit compile --dry-run` | Previews `CREATE` or `CONFLICT` for output files; writes nothing. |
-| `devinit compile --dry-run --force` | Previews `CREATE` or `OVERWRITE`; writes nothing. |
-| `devinit compile` | Generates files; refuses to overwrite existing files. |
-| `devinit compile --force` | Allows overwriting existing regular generated files (safety checks still apply). |
-| `devinit add <service>` | Adds a recipe using built-in, cached, or configured remote sources; exact option flags should be checked with `--help`. |
-| `devinit --help` | Shows installed CLI commands and options. |
+Given:
 
-The tested CLI currently looks for `compile.yaml` in the current working directory. `check` validates DevInit-supported fields, not live Docker/Kubernetes deployment health.
+```text
+my-project/
+├── backend/Dockerfile
+├── frontend/Dockerfile
+└── compile.yaml
+```
 
-## Project configuration examples
-
-### Docker Compose services with overrides
+Use:
 
 ```yaml
 services:
-  - name: postgresql
-    version: "17"
-    ports:
-      - "5433:5432"
+  - docker: true
   - name: redis
     version: "7"
-    ports:
-      - "6380:6379"
 ```
 
-Host-port mappings are subject to DevInit validation. Basic supported forms include `8080:80`, `127.0.0.1:8080:80`, `8080:80/udp`, and container-only `80`. Advanced IPv6 and range syntax is not fully verified by DevInit's built-in port checker.
+Running `devinit compile` creates Compose services for `backend`, `frontend`, and `redis`, including relative build contexts. The directive must appear as its own list item and may appear only once. It is not a top-level `docker_discovery` key. DevInit discovers Dockerfiles but does not build or execute their containers.
 
-### Kubernetes manifest templates
+## 4. Kubernetes templates
 
 ```yaml
 k8s:
   backend:
     template: deployment
     name: backend
-    image: backend:v1
+    image: nginx:alpine
     replicas: 2
-    port: 8080
+    port: 80
   backend-service:
     template: service
     name: backend
     target: backend
     port: 80
-    targetPort: 8080
+    targetPort: 80
 ```
 
-This produces files under `k8s/`. Template kinds currently confirmed: `deployment`, `service`. For other Kubernetes kinds, use a raw Kubernetes resource document as a value under `k8s`:
+This generates `k8s/backend.yaml` and `k8s/backend-service.yaml`. For other kinds, provide raw Kubernetes mappings with `apiVersion`, `kind`, and `metadata.name`. DevInit checks supported structural rules; it does not replace validation against a real cluster or Kubernetes schema.
 
-```yaml
-k8s:
-  app-settings:
-    apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: app-settings
-    data:
-      MODE: development
-```
+## 5. CI/CD generation
 
-### GitHub Actions
+GitHub Actions:
 
 ```yaml
 cicd:
@@ -97,58 +117,75 @@ cicd:
       branches: [main]
   jobs:
     - name: test
+      runner: ubuntu-latest
       steps:
+        - name: Checkout
+          action: checkout
         - name: Run tests
           action: run
           command: cargo test
 ```
 
-Confirmed generated path: `.github/workflows/devinit.yml`. GitLab CI generation is also implemented, but check the provider's exact reference schema before publishing additional examples.
+GitLab CI/CD:
 
-## Global presets and project overrides
+```yaml
+cicd:
+  provider: gitlab
+  jobs:
+    - name: build
+      steps:
+        - name: Build
+          action: run
+          command: cargo build
+    - name: test
+      needs: [build]
+      steps:
+        - name: Test
+          action: run
+          command: cargo test
+```
 
-The confirmed Linux global configuration file is `~/.config/devinit/devinit.yaml` (or `$XDG_CONFIG_HOME/devinit/devinit.yaml`). Windows behavior must be verified against the Windows build before documenting it as shipped.
+Generated files are `.github/workflows/devinit.yml` or `.gitlab-ci.yml`. Example commands above assume a Rust project; replace them for other stacks. Supported providers, triggers, runners, and step types are listed in the [Configuration Reference](CONFIG_REFERENCE.md).
 
-Global configuration example:
+## 6. Built-in registry and adding recipes
+
+```bash
+devinit list
+devinit add redis
+devinit add postgresql --version 17
+```
+
+There are 12 bundled service definitions, including relational databases, Redis, Kafka, Elasticsearch, Prometheus, Grafana, RabbitMQ, MinIO (`s3`), and LocalStack (`ec2`). `add` saves a recipe to DevInit's local cache. It does not edit your `compile.yaml` or start a container. Unsupported versions and unsafe service names are rejected.
+
+## 7. Approved downloads
+
+```bash
+devinit download redis
+devinit download kubectl
+devinit download helm
+```
+
+Image downloads are restricted to approved Docker images (Redis, PostgreSQL, Kafka, Prometheus, Grafana) and require Docker Engine. `kubectl` and Helm binary downloads are supported on Linux x86-64/ARM64. DevInit verifies SHA-256 and saves the tools to `~/.local/share/devinit/tools/`; it does not install them system-wide or add them to `PATH`. Network access is required for fresh downloads.
+
+## 8. Global presets
+
+Global configuration locations:
+
+- Linux: `~/.config/devinit/devinit.yaml` or `$XDG_CONFIG_HOME/devinit/devinit.yaml`.
+- Windows: `%APPDATA%\DevInit\devinit.yaml`.
+
+Example:
 
 ```yaml
 docker_compose:
   db:
     - name: postgresql
       version: "17"
-      ports: ["5433:5432"]
     - name: redis
       version: "7"
-      ports: ["6380:6379"]
-k8s:
-  backend:
-    deployment:
-      template: deployment
-      name: backend
-      image: backend:latest
-      replicas: 3
-      port: 8080
-    service:
-      template: service
-      name: backend
-      target: backend
-      port: 80
-      targetPort: 8080
-cicd:
-  rust-tests:
-    provider: github
-    triggers:
-      - type: push
-        branches: [main]
-    jobs:
-      - name: test
-        steps:
-          - name: Run tests
-            action: run
-            command: cargo test
 ```
 
-Project `compile.yaml` consuming the presets:
+The project can reference it:
 
 ```yaml
 services:
@@ -156,45 +193,25 @@ services:
     overrides:
       postgresql:
         ports: ["5435:5432"]
-k8s:
-  use:
-    - name: backend
-      overrides:
-        deployment:
-          image: backend:v4
-          replicas: 4
-        service:
-          targetPort: 8080
-cicd:
-  use: rust-tests
-  overrides:
-    jobs:
-      - name: test
-        steps:
-          - name: Run release tests
-            action: run
-            command: cargo test --release
 ```
 
-**Important:** presets are user-specific. Another developer must have corresponding global presets, or you should use explicit definitions in `compile.yaml`. A proposed `devinit copy` command to export a fully resolved specification is **not implemented in v0.0.2**.
+The preset must already be defined locally. Presets can also be used for Kubernetes and CI/CD. Overrides cannot rename preset services or target nonexistent definitions; nested preset references are unsupported.
 
-## Safety and validation
+## 9. Troubleshooting
 
-- Invalid configurations fail before writing generated files.
-- Generated output paths are checked for duplicates and unsafe path traversal.
-- Existing output files are protected by default; use `--force` only when replacement is intended.
-- `--dry-run` does not modify files, including with `--force`.
-- Output generation is **not** a multi-file transaction; an I/O failure during writing can leave some files written.
-- Kubernetes raw manifest validation is intentionally partial, not a substitute for Kubernetes API/schema validation.
+| Symptom | What to do |
+| --- | --- |
+| `Refusing to overwrite` or output `CONFLICT` | Review `devinit compile --dry-run`; only use `--force` when replacement is intended. |
+| `Service directory not found` | Restore `resources/services` alongside the executable, use a supported system layout, or configure `DEVINIT_SERVICES_DIR`. |
+| `unknown field docker_discovery` | Use `services:\n  - docker: true` instead of a top-level key. |
+| Unsupported service version | Check available bundled recipes; do not assume any image tag is accepted. |
+| Port conflict | Assign distinct published ports or use compatible protocol/bind interfaces. |
+| Unknown preset | Create the named global preset or replace it with explicit declarations. |
+| Missing dependency or cycle | Check `depends_on` / CI `needs` names and break cycles. |
+| `login`, `license`, or `test` returns an error | These commands are reserved and not implemented in the reviewed version. |
 
-## Troubleshooting
+## 10. Reliability boundaries
 
-- `Refusing to overwrite ...`: a generated destination already exists. Run `devinit compile --dry-run`, inspect changes, or explicitly use `--force`.
-- Unknown preset: create the named global preset or replace it with explicit definitions.
-- Port conflict: assign distinct published host ports or protocols.
-- Invalid Kubernetes Deployment selector: ensure `spec.selector.matchLabels` matches the Pod template labels.
-- CI/CD circular dependency: remove cyclic `needs` references.
+DevInit is **safe by default**: `check` and `dry-run` do not write generated output, existing files are protected, and file paths are validated. However, multi-file generation is not guaranteed to roll back all writes after an I/O failure. Validate output with Docker Compose, Kubernetes, or CI-specific validators before use in production. DevInit does not execute deployment operations during compilation.
 
-## Publishing checklist
-
-Before releasing this guide, validate `--help`, Windows paths, CLI binary naming, package names, and all example files against the tagged `v0.0.2` release.
+For field-level details, refer to [Configuration Reference](CONFIG_REFERENCE.md). For AI-assisted YAML authoring, see [AI Instructions](AI_INSTRUCTIONS.md).

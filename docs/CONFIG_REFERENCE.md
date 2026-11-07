@@ -1,20 +1,47 @@
-# DevInit CLI v0.0.2 — Configuration Reference (Verified Subset)
+# DevInit CLI — Configuration Reference
 
-> **Status: draft.** This document lists confirmed syntax from code excerpts and successful CLI runs. It is not a complete schema. Complete it against `cli/src/models/*`, `cli/src/validator/*`, preset expansion and generator code before tagging a release.
+**Applies to:** audited `0.0.4` development implementation, prior to the planned v1.0.0 release candidate.  
+**Scope:** supported, source-confirmed DevInit syntax; this is not a complete formal JSON Schema.  
+**Input:** `compile.yaml` in the project working directory.
 
-## `compile.yaml` top-level document
+DevInit generates infrastructure files, not deployments. Run `devinit check` before `devinit compile --dry-run`; external platforms may impose additional validation requirements.
 
-| Key | Kind | Purpose |
+## 1. Top-level structure
+
+| Key | Type | Purpose |
 | --- | --- | --- |
-| `services` | sequence | Concrete services, registry recipes, or global Docker Compose preset references |
-| `k8s` | mapping | Raw Kubernetes resources, short templates or Kubernetes preset references |
-| `cicd` | mapping | CI/CD pipeline definition or preset reference |
+| `services` | sequence | Custom services, registry references, Dockerfile discovery, or Compose presets |
+| `k8s` | mapping | Kubernetes templates, raw manifests, or presets |
+| `cicd` | mapping | GitHub Actions or GitLab CI/CD pipeline, or preset |
 
-All three are optional individually in observed tests.
+The keys are individually optional. **Unknown top-level keys are rejected** in the reviewed implementation. `docker_discovery: true` at top level is invalid; use the service-list declaration below.
 
-### Services
+```yaml
+services:
+  - name: redis
+    version: "7"
+k8s:
+  redis-helper:
+    template: deployment
+    name: redis-helper
+    image: nginx:alpine
+    replicas: 1
+    port: 80
+cicd:
+  provider: github
+  jobs:
+    - name: validate
+      steps:
+        - name: Run checks
+          action: run
+          command: cargo test
+```
 
-Confirmed registry recipe syntax:
+This is a syntax example, not a recommended deployment architecture.
+
+## 2. Services
+
+### 2.1 Built-in registry shorthand
 
 ```yaml
 services:
@@ -24,53 +51,123 @@ services:
     version: "7"
 ```
 
-Confirmed custom service syntax:
+The `version` field is interpreted by the registry resolver; the resolved service is converted to a full recipe before generation. Omitting `version` selects the packaged default. `postgresql` currently defaults to `16`, while supported versions include `15`, `16`, and `17` in the audited registry. Other versions must be checked with the packaged service definitions; arbitrary versions are not guaranteed to work.
+
+Do not combine `image` with `version` for the same service. Other supported fields may be used as registry overrides if accepted by the resolver and validators.
+
+Packaged service names are `postgresql`, `mysql`, `mariadb`, `mongodb`, `redis`, `rabbitmq`, `kafka`, `elasticsearch`, `prometheus`, `grafana`, `s3` (MinIO), and `ec2` (LocalStack). `devinit list` displays defaults for the installed version.
+
+### 2.2 Explicit custom services
 
 ```yaml
 services:
   - name: backend
-    image: backend:latest
-    ports: ["8080:8080"]
+    description: Example web service
+    image: nginx:alpine
+    ports: ["8080:80"]
+    environment:
+      - APP_ENV=development
+    depends_on: [redis]
+    restart: unless-stopped
+  - name: redis
+    version: "7"
 ```
 
-Do not combine `image` and `version` on the same service. `depends_on` is a list of other declared service names; duplicate, unknown, self and cyclic dependencies are rejected. Basic published host-port collisions are rejected.
+The resolved `RecipeCompose` Rust model supports:
 
-Confirmed preset reference syntax:
+| Field | Value type | Notes |
+| --- | --- | --- |
+| `name` | string | Required service name; validated for safe naming |
+| `description` | optional string | Descriptive metadata; may become a Compose label |
+| `image` | string | Container image in an explicit service recipe |
+| `ports` | optional list of strings | Published/container port mappings |
+| `environment` | optional list of strings | Compose environment entries |
+| `volumes` | optional list of strings | Bind and named mounts |
+| `networks` | optional list of strings | Network attachment names |
+| `depends_on` | optional list of strings | Other declared service names |
+| `restart` | optional string | Restart policy |
+| `command` | optional list of strings | Container command and arguments |
+| `files` | optional file object or list | Additional generated files; see below |
+| `env` | optional list of strings | Environment-file-related recipe entries |
+| `notes` | optional list of strings | Human-readable notes |
+
+**Note:** This table describes the resolved recipe representation. Public shorthand inputs additionally support `version` and preset fields before resolution; not all properties are valid for every shorthand or override context. Unsupported combinations are rejected by the resolver or validators.
+
+A `files` entry contains `path` and `content`:
 
 ```yaml
 services:
-  - use: db
-    overrides:
-      postgresql:
-        ports: ["5435:5432"]
+  - name: backend
+    image: nginx:alpine
+    files:
+      - path: config/app.yaml
+        content: |
+          mode: development
 ```
 
-The matching global config section is `docker_compose.db`, a list of service definitions. `overrides` may reference only services defined by that preset; a service cannot be renamed through overrides.
+The source supports either a single `{path, content}` object or a list of objects; generated paths are subject to safety checks. Some bundled recipes generate service-specific directories and files (for example Prometheus and Grafana configuration).
 
-### Kubernetes short templates
+### 2.3 Dockerfile discovery
+
+```yaml
+services:
+  - docker: true
+  - name: redis
+    version: "7"
+```
+
+The discovery directive must contain **only** `docker: true`, and may occur **once**. It searches for supported project Dockerfiles and adds Compose build services with an appropriate `build.context` and `build.dockerfile`. It fails if explicitly requested but no Dockerfiles are found, or if a discovered name conflicts with a declared service. Generated Compose files are not automatically built or run.
+
+### 2.4 Dependencies, ports, and versions
+
+- Referenced dependencies must exist. Self-dependencies, duplicates, and cycles are rejected.
+- Supported port examples include `8080:80`, `127.0.0.1:8080:80`, `8080:80/udp`, and container-only `80`.
+- Published host port conflicts are checked for overlapping host interfaces and matching protocols. Advanced IPv6 and port-range validation is not complete.
+- Service versions are limited to packaged or otherwise configured and validated definitions.
+
+## 3. Kubernetes (`k8s`)
+
+### 3.1 Deployment and Service templates
 
 ```yaml
 k8s:
   backend:
     template: deployment
     name: backend
-    image: backend:latest
-    replicas: 3
-    port: 8080
+    image: nginx:alpine
+    replicas: 2
+    port: 80
   backend-service:
     template: service
     name: backend
     target: backend
     port: 80
-    targetPort: 8080
+    targetPort: 80
     type: ClusterIP
 ```
 
-Confirmed allowed `deployment` template fields: `template`, `name`, `image`, `replicas`, `port`. Replicas: 0–10000. Port: 1–65535; default 8080. `service` template fields: `template`, `name`, `target`, `port`, `targetPort`, `type`. Types confirmed by template implementation: `ClusterIP`, `NodePort`, `LoadBalancer`. Ports 1–65535.
+Confirmed deployment template fields: `template`, `name`, `image`, `replicas`, `port`. The verified implementation accepts replicas in `0..=10000`; port `1..=65535`, with a template default of `8080`.
 
-Raw Kubernetes objects are supported as mappings with `apiVersion`, `kind`, and `metadata.name`. Deployment and Service raw objects receive additional structural checks; other kinds remain mostly opaque except required metadata and duplicate identity checks. Do not interpret successful DevInit validation as validation against a live Kubernetes API server.
+Confirmed Service template fields: `template`, `name`, `target`, `port`, `targetPort`, `type`. Supported `type` values are `ClusterIP`, `NodePort`, and `LoadBalancer`; ports must be in `1..=65535`.
 
-Confirmed Kubernetes preset reference:
+Output files follow `k8s/<entry-key>.yaml`; in this example, `k8s/backend.yaml` and `k8s/backend-service.yaml`.
+
+### 3.2 Raw manifests
+
+```yaml
+k8s:
+  app-settings:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: app-settings
+    data:
+      MODE: development
+```
+
+Raw mappings require basic Kubernetes identity fields (`apiVersion`, `kind`, `metadata.name`). Selected Deployment and Service structures receive extra checks. Other resource kinds are not exhaustively validated against the Kubernetes API; use `kubectl` or a cluster-side schema validator for production use.
+
+### 3.3 Kubernetes presets
 
 ```yaml
 k8s:
@@ -78,14 +175,14 @@ k8s:
     - name: backend
       overrides:
         deployment:
-          replicas: 5
-        service:
-          targetPort: 3000
+          replicas: 4
 ```
 
-`k8s.use: [backend]` is also supported. The preset must exist in the global `k8s` mapping. Overrides apply to named manifests in that preset.
+`k8s.use: [backend]` is also supported. Referenced presets must exist in global `devinit.yaml`; overrides may only target known manifests in the named group. The expanded output names include the preset and manifest names.
 
-### CI/CD
+## 4. CI/CD (`cicd`)
+
+### 4.1 GitHub Actions
 
 ```yaml
 cicd:
@@ -95,13 +192,53 @@ cicd:
       branches: [main]
   jobs:
     - name: test
+      runner: ubuntu-latest
       steps:
+        - name: Checkout
+          action: checkout
         - name: Run tests
           action: run
           command: cargo test
 ```
 
-`cicd.use: rust-tests` (and `cicd.overrides`) refers to a named pipeline in the global `cicd` mapping:
+Produces `.github/workflows/devinit.yml`.
+
+### 4.2 GitLab CI/CD
+
+```yaml
+cicd:
+  provider: gitlab
+  jobs:
+    - name: build
+      steps:
+        - name: Build
+          action: run
+          command: cargo build
+    - name: test
+      needs: [build]
+      steps:
+        - name: Test
+          action: run
+          command: cargo test
+```
+
+Produces `.gitlab-ci.yml`.
+
+### 4.3 Confirmed values
+
+| Property | Supported values |
+| --- | --- |
+| `provider` | `github`, `gitlab` |
+| Trigger `type` | `push`, `pull_request`, `manual` |
+| Trigger `branches` | Optional list of strings for `push` / `pull_request` |
+| Job `runner` | `ubuntu-latest` (default), `windows-latest`, `macos-latest` |
+| Step `action` | `checkout`, `run`, `docker_build`, `docker_push` |
+
+A job has `name`, optional `runner`, optional `needs` (list of other job names), and `steps` (ordered list). A step has `name`, `action`, and optional `env` (string-to-string mapping). `run` requires `command`; `docker_build` requires `dockerfile` and `image`; `docker_push` requires `image`.
+
+DevInit checks supported dependency constraints, including missing references and cycles. Successful rendering does not guarantee the remote CI pipeline will execute successfully.
+
+### 4.4 CI/CD preset
 
 ```yaml
 cicd:
@@ -115,32 +252,82 @@ cicd:
             command: cargo test --release
 ```
 
-CI/CD jobs may declare `needs` references; unknown and cyclic references are rejected. Note: the complete provider/runner/trigger/step enum set has **not yet been extracted** from the Rust models, so this reference does not claim to enumerate all possible variants.
+`rust-tests` must be defined in the global `cicd` preset mapping. The override merge process recursively merges mappings and replaces sequences; it does not append list items.
 
-### Global configuration
+## 5. Global presets and backend URL
 
-Verified Linux path: `~/.config/devinit/devinit.yaml` or `$XDG_CONFIG_HOME/devinit/devinit.yaml`. Expected top-level sections from tested presets: `default_url`, `docker_compose`, `k8s`, `cicd`. Windows path resolution should be documented only after Windows build verification.
+Global `devinit.yaml` paths:
 
-### Output paths
-
-| Source | Confirmed output |
+| System | Path |
 | --- | --- |
-| `services` | `docker-compose.yaml` |
-| Raw and templated `k8s.<key>` | `k8s/<key>.yaml` |
-| `cicd` with GitHub provider | `.github/workflows/devinit.yml` |
-| GitLab CI | `.gitlab-ci.yml` |
+| Linux | `~/.config/devinit/devinit.yaml`, or `$XDG_CONFIG_HOME/devinit/devinit.yaml` |
+| Windows | `%APPDATA%\DevInit\devinit.yaml` |
 
-### Validation boundaries
+Example global presets:
 
-DevInit validates supported declaration rules, registry versions, dependencies, selected port formats, Kubernetes template structure, and output path conflicts. It does not fully validate Docker Compose or Kubernetes schemas. Existing files are not overwritten without `--force`; no multi-file transactional rollback is promised.
+```yaml
+default_url: http://localhost:5167
+docker_compose:
+  db:
+    - name: postgresql
+      version: "17"
+    - name: redis
+      version: "7"
+k8s:
+  backend:
+    deployment:
+      template: deployment
+      name: backend
+      image: nginx:alpine
+      replicas: 2
+      port: 80
+cicd:
+  rust-tests:
+    provider: github
+    jobs:
+      - name: test
+        steps:
+          - name: Run tests
+            action: run
+            command: cargo test
+```
 
-## Fields to extract from source before publishing as complete reference
+Use a Compose preset from your project:
 
-- All supported `CompileService`/`RecipeCompose` fields, types, defaults and constraints.
-- All supported CI providers, triggers, runners and step actions.
-- Legacy Kubernetes deployment model fields and generators.
-- Preset resolution precedence and override merge semantics.
-- Exact global config path logic on Windows.
-- CLI flags and positional arguments for `add`, `get`, `list`, `login`.
+```yaml
+services:
+  - use: db
+    overrides:
+      postgresql:
+        ports: ["5435:5432"]
+```
 
-A robust approach for future AI tools is a **versioned machine-readable JSON Schema for `compile.yaml`** generated or maintained alongside this reference. Do not claim one exists until implemented and tested.
+A Compose preset may be referenced using `use` and optional `overrides`; only services defined within the preset may be overridden, and their `name` or `use` identities may not be changed. Nested preset references are not supported. Presets are user-specific: do not assume they exist on another machine.
+
+The backend URL is selected in priority order: `DEVINIT_API_URL`, global `default_url`, or `http://localhost:5167`. Local generation does not require a remote backend. The URL affects features that consult the backend, not Docker/Kubernetes deployments.
+
+## 6. Output paths and file safety
+
+| Configuration | Output |
+| --- | --- |
+| `services` / Docker discovery | `docker-compose.yaml` |
+| `k8s.<name>` | `k8s/<name>.yaml` |
+| `cicd.provider: github` | `.github/workflows/devinit.yml` |
+| `cicd.provider: gitlab` | `.gitlab-ci.yml` |
+| Recipe `files` | Declared relative file paths |
+
+`devinit check` validates and computes a plan but writes no generated output. `devinit compile --dry-run` previews CREATE/CONFLICT, and `--dry-run --force` previews OVERWRITE without writing. `devinit compile` refuses to overwrite existing files; `--force` is explicit and is still subject to path/symlink safety restrictions. Output generation is not promised to be transactional across multiple files.
+
+## 7. Registry and downloads
+
+- `devinit list` lists 12 bundled recipes and their default versions.
+- `devinit add <service> [--version <version>]` caches selected recipes; it does not edit `compile.yaml` automatically.
+- `devinit download <name>` accepts a restricted set of approved Docker image names (`redis`, `postgresql`, `kafka`, `prometheus`, `grafana`) or Linux CLI tools (`kubectl`, `helm`).
+- Binary tools are stored in `~/.local/share/devinit/tools/`, verified with SHA-256 and do not automatically change `PATH`.
+- Downloaded CLI tools currently support Linux x86-64 and ARM64; image downloads require Docker Engine.
+
+## 8. Scope and compatibility notes
+
+This reference documents confirmed user-facing behavior from the audited Rust models, CLI tests, and manual integration checks. It is not a machine-readable schema and does not enumerate all private resolver internals or every possible value accepted by upstream Docker, Kubernetes, or CI systems.
+
+`devinit get` is experimental and backend-dependent in some situations. `login`, `license`, and `test` are registered but not yet implemented and return errors. There is no supported `devinit copy` command or guaranteed lockfile-based reproduction in this reviewed version. Always test generated configuration files with their intended external tools before production use.

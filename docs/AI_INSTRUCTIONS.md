@@ -1,68 +1,79 @@
-# DevInit v0.0.2 — Instructions for AI Configuration Generators
+# DevInit CLI — Instructions for AI Configuration Generators
 
-You are generating a **DevInit `compile.yaml`** file, **not** a Docker Compose file or Kubernetes manifest bundle. DevInit transforms this declarative input into Docker Compose, Kubernetes and CI/CD outputs.
+**Authority:** DevInit's actual tagged release code, its [Configuration Reference](CONFIG_REFERENCE.md), and validated examples. This guide reflects the audited `0.0.4` development baseline and is intended for the upcoming v1.0.0 release candidate.
 
-## Primary objective
+## Task
 
-Given a user's description of an application's services and intended infrastructure, produce one valid `compile.yaml` that uses **only documented DevInit features**. Do not hallucinate keys, templates, available registry recipes or commands.
+Generate one **DevInit `compile.yaml`**, not raw Docker Compose or Kubernetes YAML, from a user's infrastructure requirements. Keep the configuration minimal, explicit when needed, and safe. Do not invent service names, versions, fields, commands, presets, or behavior.
 
-## Non-negotiable rules
+## Core rules
 
-1. Output YAML only when the user asks for a ready-to-use configuration; optionally add a concise explanation separately if requested.
-2. Top-level sections currently confirmed: `services`, `k8s`, `cicd`. Include only sections required by the request.
-3. A service may be a concrete definition (`name`, `image`, optional supported fields) or a registry recipe with `name` + `version`; do not specify `image` and `version` together.
-4. Built-in recipe versions demonstrated and tested: `postgresql` version `"17"`, `redis` version `"7"`. Do not assume arbitrary service names or versions are installed.
-5. Preset syntax `use` requires a matching preset in the user's **global** `devinit.yaml`. If preset availability is unknown, default to explicit definitions or ask for the preset names; do not fabricate a preset.
-6. Kubernetes template names demonstrated: `deployment`, `service`. To describe other resource kinds, use a raw Kubernetes resource mapping under `k8s` with `apiVersion`, `kind`, `metadata.name` and the applicable structure.
-7. CI/CD provider `github` with `push` trigger and `run` step is confirmed. Avoid inventing other provider-specific trigger/step variants without consulting `CONFIG_REFERENCE.md` or the project's Rust model types.
-8. Use valid, non-conflicting ports in `1..=65535`; never duplicate published host ports on overlapping interfaces for the same protocol.
-9. All referenced Compose dependencies and CI/CD `needs` jobs must exist. Dependencies must not form cycles.
-10. Never include real credentials, access tokens, private keys or hardcoded production passwords. Use environment references only when their support is confirmed by the project schema.
-11. Do not promise that a valid `compile.yaml` guarantees runtime deployment, schema compatibility or security.
-12. When the user's request requires a feature not confirmed by DevInit documentation, state that limitation rather than inventing a configuration field.
+1. Use only supported top-level keys: `services`, `k8s`, and `cicd`. Omit sections the user does not need. Unknown root fields are rejected.
+2. Prefer packaged registry shorthand (`name` plus optional supported `version`) to duplicate defaults. Use an explicit custom service with `name` and `image` when appropriate. Do not combine `image` and `version` on one service.
+3. For project Dockerfile discovery, use a **standalone list item** `- docker: true` within `services`. Do not write `docker_discovery: true` at top level. Enable discovery only when the user wants locally discovered applications included.
+4. Built-in service names are `postgresql`, `mysql`, `mariadb`, `mongodb`, `redis`, `rabbitmq`, `kafka`, `elasticsearch`, `prometheus`, `grafana`, `s3`, and `ec2`. Do not assume arbitrary versions; the reviewed implementation confirms PostgreSQL `"17"` and Redis `"7"` among supported choices.
+5. Use only confirmed Kubernetes templates `deployment` and `service`; for other resource kinds, use raw Kubernetes objects under `k8s` with valid API metadata, and state that external validation is needed.
+6. CI/CD providers: `github`, `gitlab`. Triggers: `push`, `pull_request`, `manual`. Runners: `ubuntu-latest`, `windows-latest`, `macos-latest`. Steps: `checkout`, `run`, `docker_build`, `docker_push`. Use the field requirements in the Configuration Reference.
+7. Never fabricate global presets. Use `use` only when the user's global `devinit.yaml` is known to contain a matching preset; otherwise generate a self-contained specification.
+8. All `depends_on` services and CI `needs` jobs must exist; references must be acyclic. Avoid duplicate or conflicting published host ports.
+9. Do not embed real passwords, API keys, private keys, or production tokens. Use environment-variable references only when known to be valid for the generated configuration.
+10. Do not claim DevInit deploys services, builds Docker images when compiling, fully validates platform specifications, or makes multi-file writes atomic.
+11. Prefer small, readable input with sensible defaults over unnecessary configuration. Explain unsupported requirements rather than silently inventing syntax.
+12. If the user asks only for ready-to-use configuration, output YAML without commentary unless clarification of an unmet requirement is necessary.
 
-## Verified examples
+## Verified patterns
 
-### Explicit Docker Compose recipe services
+### Registry-based Compose services
 
 ```yaml
 services:
   - name: postgresql
     version: "17"
-    ports: ["5433:5432"]
   - name: redis
     version: "7"
-    ports: ["6380:6379"]
 ```
 
-### Explicit custom service
+For PostgreSQL, downstream Docker Compose requires a `POSTGRES_PASSWORD` value; never embed actual credentials in YAML.
+
+### Custom service and published port
 
 ```yaml
 services:
   - name: backend
-    image: backend:latest
-    ports: ["8080:8080"]
+    image: nginx:alpine
+    ports: ["8080:80"]
 ```
 
-### Kubernetes Deployment and Service templates
+### Dockerfile discovery with a registry service
+
+```yaml
+services:
+  - docker: true
+  - name: redis
+    version: "7"
+```
+
+Requires Dockerfiles in the project. DevInit generates build-context services but does not execute `docker build`.
+
+### Kubernetes templates
 
 ```yaml
 k8s:
   backend:
     template: deployment
     name: backend
-    image: backend:v1
+    image: nginx:alpine
     replicas: 2
-    port: 8080
+    port: 80
   backend-service:
     template: service
     name: backend
     target: backend
     port: 80
-    targetPort: 8080
+    targetPort: 80
 ```
 
-### GitHub Actions workflow
+### GitHub Actions
 
 ```yaml
 cicd:
@@ -73,12 +84,35 @@ cicd:
   jobs:
     - name: test
       steps:
+        - name: Checkout
+          action: checkout
         - name: Run tests
           action: run
           command: cargo test
 ```
 
-### Presets when names and definitions are known
+Use `cargo test` only for an actual Rust project; substitute build/test commands based on the user's stack.
+
+### GitLab CI/CD
+
+```yaml
+cicd:
+  provider: gitlab
+  jobs:
+    - name: build
+      steps:
+        - name: Build
+          action: run
+          command: cargo build
+    - name: test
+      needs: [build]
+      steps:
+        - name: Test
+          action: run
+          command: cargo test
+```
+
+### Preset (only if explicitly known to exist)
 
 ```yaml
 services:
@@ -86,40 +120,30 @@ services:
     overrides:
       postgresql:
         ports: ["5435:5432"]
-k8s:
-  use:
-    - name: backend
-      overrides:
-        deployment:
-          replicas: 4
-cicd:
-  use: rust-tests
 ```
 
-This final example depends on a global `db`, `backend` and `rust-tests` preset; **do not select it as a standalone configuration** when global presets are unknown.
+This is not standalone: the global `docker_compose.db` preset must exist.
 
-## Generation checklist (perform before answering)
+## Self-check before responding
 
-- Is the YAML syntactically correct?
-- Are all keys confirmed by the reference or project source?
-- Do service names and CI/CD job names refer to existing declarations?
-- Are port values, dependency graphs and resource identifiers internally consistent?
-- Does every template use exactly its documented keys?
-- Is the configuration independent of user-global presets unless explicitly requested?
-- Is there any sensitive data embedded in the YAML?
+- Does the YAML parse correctly and contain only documented root sections?
+- Are all service names, versions, and action names supported?
+- Does Docker discovery use `services: - docker: true` and correspond to the user's intent?
+- Are dependencies declared, valid, and acyclic?
+- Do all published ports avoid conflicts?
+- Does every Kubernetes template use its supported fields?
+- Are global presets guaranteed to exist if referenced?
+- Is the content free of credentials and unsupported assumptions?
+- Does the result avoid claiming anything about runtime deployment or guaranteed external compatibility?
 
-## Suggested user handoff
+## User handoff
 
-After giving a config, tell the user to run, in this order:
+Recommend the following workflow after producing a file:
 
-```text
+```bash
 devinit check
 devinit compile --dry-run
 devinit compile
 ```
 
-DevInit refuses to overwrite generated files by default. `--force` is opt-in. `devinit copy` and lockfile-based reproduction are future features, not part of the confirmed v0.0.2 CLI.
-
-## Important authority rule
-
-This is a **conservative generative guide**, not a complete formal schema. When a complete field/variant reference becomes available, treat `CONFIG_REFERENCE.md` and the exact Rust models/validators for the tagged release as authoritative. Never infer unlisted YAML keys from Docker Compose/Kubernetes standards.
+Do not use `--force` by default; it explicitly permits overwriting generated files. For complex Kubernetes or CI/CD outputs, recommend external validation with the appropriate platform tools. `devinit login`, `devinit license`, and `devinit test` are not implemented in the audited baseline; `get` can depend on backend availability. Do not invent `devinit copy`, auto-deployment, or lockfile commands.

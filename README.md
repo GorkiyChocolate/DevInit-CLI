@@ -1,467 +1,269 @@
 # DevInit CLI
 
-**Define once. Validate safely. Generate infrastructure configurations effortlessly.**
+**Define once. Validate safely. Generate infrastructure configurations with confidence.**
 
-DevInit is an open-source, Rust-based command-line tool designed to simplify infrastructure configuration management through a declarative approach.
+DevInit is a Rust command-line tool for declarative infrastructure configuration generation. Describe the infrastructure you need in a `compile.yaml` file, validate it, and generate configuration files for **Docker Compose, Kubernetes, GitHub Actions, and GitLab CI/CD**.
 
-Instead of manually maintaining multiple configuration formats, DevInit allows developers to describe their infrastructure requirements in a single `compile.yaml` file and generate configurations for **Docker Compose, Kubernetes, GitHub Actions, and GitLab CI/CD**.
+DevInit follows a simple philosophy: **minimum configuration, maximum automation**. It favors sensible defaults, optional advanced settings, offline-first service recipes, safe file handling, and actionable errors.
 
-DevInit focuses on predictable generation, reusable infrastructure components, offline-first functionality, and protecting existing project files.
+> **Status:** Active development; preparing a v1.0.0 release candidate.  
+> **Current source version:** `0.0.4` (not yet v1.0.0).  
+> **Packaged CLI platforms:** Linux x64 and Windows x64.  
+> **License:** No license file has been provided yet. See [License](#license).
 
-> **Project Status:** Active development  
-> **Current Version:** v0.0.2  
-> **Platform Support:** Linux and Windows (x64)
+## What DevInit does
 
----
+- **Declarative generation:** Generate supported Docker Compose, Kubernetes, GitHub Actions, and GitLab CI/CD files from one `compile.yaml`.
+- **Dockerfile discovery:** Opt in to detecting Dockerfiles in your project and adding their build contexts to the generated Compose configuration.
+- **Offline-first registry:** Use 12 packaged service recipes and supported versions without relying on a web backend.
+- **Reusable presets:** Define global service, Kubernetes, and CI/CD presets and apply controlled project-level overrides.
+- **Safe generation:** Validate with `check`, preview with `compile --dry-run`, and avoid overwriting files unless `--force` is explicitly supplied.
+- **Resource downloads:** Download approved Docker images and, on supported Linux platforms, verified `kubectl` and Helm binaries.
 
-## Features
+DevInit **generates configuration files**. `compile` does not build images, start containers, deploy workloads, install dependencies, or provision cloud resources. Its validation is not a replacement for Docker Compose, Kubernetes API, or CI provider validation.
 
-### Declarative Configuration
-
-Define infrastructure requirements using a single YAML configuration file.
-
-DevInit handles validation, dependency resolution, and generation of supported infrastructure resources.
-
-### Multi-Platform Generation
-
-Generate configuration files for:
-
-- **Docker Compose** — containerized services and their dependencies.
-- **Kubernetes** — Deployments, Services, and supported custom manifests.
-- **GitHub Actions** — automated workflows.
-- **GitLab CI/CD** — pipeline configuration.
-
-### Built-in Service Registry
-
-DevInit provides reusable service recipes for common infrastructure components, including:
-
-- PostgreSQL
-- MySQL
-- MariaDB
-- MongoDB
-- Redis
-- RabbitMQ
-- Apache Kafka
-- Elasticsearch
-- Prometheus
-- Grafana
-
-Supported versions and available recipes depend on the installed DevInit version.
-
-### Reusable Presets
-
-Create reusable configuration presets for Docker Compose, Kubernetes, and CI/CD workflows.
-
-Presets can be stored in the global DevInit configuration and customized using project-level overrides.
-
-### Configuration Validation
-
-DevInit validates supported configuration rules before generating files, including:
-
-- Service declarations and required fields.
-- Dependency references and circular dependencies.
-- Docker Compose port mappings and selected port conflicts.
-- Kubernetes manifest structure.
-- CI/CD job dependencies and dependency cycles.
-- Output paths and existing-file conflicts.
-
-Validation does not replace full validation against Docker, Kubernetes, or CI/CD platform specifications.
-
-### Safe File Generation
-
-DevInit is designed to preserve existing project files.
-
-- Existing files are not overwritten by default.
-- `--force` explicitly enables overwriting.
-- `check` validates without generating files.
-- `--dry-run` previews planned operations.
-- Generated output paths are checked for unsafe filesystem operations.
-
-### Offline-First Operation
-
-Built-in recipes, locally cached resources, and local generation workflows can operate without an active connection to the DevInit backend.
-
-Remote configuration distribution and account-based functionality are being developed separately.
-
----
-
-## Installation
-
-### Windows
-
-Download the Windows installer from the repository's [Releases](https://github.com/GorkiyChocolate/DevInit-CLI/releases) page when a release is available.
-
-Run:
-
-`DevInit-Setup-0.0.2.exe`
-
-Follow the installation wizard, then reopen PowerShell and verify the installation:
-
-```powershell
-devinit --version
-devinit --help
-```
-
-For a portable installation, download the Windows ZIP archive, extract `devinit.exe`, and run it directly or add its directory to your `PATH`.
-
-### Linux
-
-Download the Linux x64 archive from the Releases page when available, extract it, and install the executable:
-
-```bash
-tar -xzf devinit-linux-x64.tar.gz
-chmod +x devinit
-sudo install -m 755 devinit /usr/local/bin/devinit
-```
-
-Verify:
-
-```bash
-devinit --version
-devinit --help
-```
-
-### Build from Source
-
-**Requirements:**
-
-- Rust toolchain with support for edition 2024.
-- Cargo.
-- Git.
-
-Clone the repository:
-
-```bash
-git clone https://github.com/GorkiyChocolate/DevInit-CLI.git
-cd DevInit-CLI
-```
-
-Build the executable:
-
-```bash
-cargo build --release
-```
-
-The executable will be available at:
-
-```text
-target/release/devinit
-```
-
-On Windows:
-
-```text
-target\release\devinit.exe
-```
-
-Docker and Kubernetes are not required simply to generate configuration files.
-
----
-
-## Quick Start
-
-### 1. Create a configuration file
+## Quick start
 
 Create `compile.yaml` in your project directory:
 
 ```yaml
 services:
   - name: backend
-    image: backend:latest
-    ports:
-      - "8080:8080"
-
+    image: nginx:alpine
+    ports: ["8080:80"]
   - name: postgresql
     version: "17"
-
   - name: redis
     version: "7"
 ```
 
-This example describes a backend application, PostgreSQL, and Redis.
-
-### 2. Validate the configuration
+Run these commands from that directory:
 
 ```bash
 devinit check
-```
-
-DevInit validates the configuration and prepares the generation plan without creating output files.
-
-### 3. Preview generation
-
-```bash
 devinit compile --dry-run
-```
-
-Review the planned files and any output conflicts.
-
-### 4. Generate configurations
-
-```bash
 devinit compile
 ```
 
-The generated files depend on the sections declared in `compile.yaml`.
+The example generates `docker-compose.yaml`. The first compile creates the file; subsequent compiles refuse to overwrite it by default. Use `devinit compile --dry-run --force` to preview a replacement and `devinit compile --force` only when you intend to overwrite existing generated files.
 
-For the example above, DevInit generates:
+> The packaged PostgreSQL recipe requires a `POSTGRES_PASSWORD` environment value when Docker Compose resolves the generated file. Set credentials securely; do not commit production secrets.
 
-```text
-my-project/
-├── compile.yaml
-└── docker-compose.yaml
+### Discover existing Dockerfiles
+
+Given `backend/Dockerfile` and `frontend/Dockerfile` in your project, use:
+
+```yaml
+services:
+  - docker: true
+  - name: redis
+    version: "7"
 ```
 
-If generated output already exists, DevInit refuses to overwrite it by default.
+DevInit discovers the Dockerfiles and creates Compose build services with appropriate contexts, alongside Redis. The discovery directive is **`- docker: true` inside `services`**. A top-level `docker_discovery: true` is not valid.
 
-To explicitly allow overwriting:
+### Kubernetes and CI/CD
 
-```bash
-devinit compile --force
-```
-
-**Warning:** `--force` can replace existing configuration content. Review changes before using it.
-
----
-
-## Kubernetes Configuration
-
-DevInit supports Kubernetes configuration generation using simplified templates and raw manifests.
-
-Example:
+Use `k8s` for Kubernetes templates or raw resources and `cicd` for supported pipeline definitions:
 
 ```yaml
 k8s:
   backend:
-    apiVersion: apps/v1
-    kind: Deployment
-    metadata:
-      name: backend
-    spec:
-      replicas: 2
-      selector:
-        matchLabels:
-          app: backend
-      template:
-        metadata:
-          labels:
-            app: backend
-        spec:
-          containers:
-            - name: backend
-              image: backend:latest
-              ports:
-                - containerPort: 8080
-
+    template: deployment
+    name: backend
+    image: nginx:alpine
+    replicas: 2
+    port: 80
   backend-service:
-    apiVersion: v1
-    kind: Service
-    metadata:
-      name: backend
-    spec:
-      selector:
-        app: backend
-      ports:
-        - port: 80
-          targetPort: 8080
+    template: service
+    name: backend
+    target: backend
+    port: 80
+    targetPort: 80
+cicd:
+  provider: github
+  triggers:
+    - type: push
+      branches: [main]
+  jobs:
+    - name: build
+      steps:
+        - name: Checkout
+          action: checkout
+        - name: Build
+          action: run
+          command: cargo build
 ```
 
-Expected generated files:
+This creates Kubernetes files under `k8s/` and a GitHub Actions workflow at `.github/workflows/devinit.yml`. The CI job above is illustrative for a Rust project; choose commands appropriate for your own codebase. See [Configuration Reference](docs/CONFIG_REFERENCE.md) for supported syntax.
+
+## Installation
+
+Installable release assets will be linked from [GitHub Releases](https://github.com/GorkiyChocolate/DevInit-CLI/releases) when published. A successful CI run does **not** imply a public release has been published.
+
+### Linux x64 — portable, no sudo
+
+Download `devinit-linux-x64.tar.gz` when it is available as a release asset, then:
+
+```bash
+mkdir -p ~/.local/opt/devinit
+tar -xzf devinit-linux-x64.tar.gz -C ~/.local/opt/devinit
+~/.local/opt/devinit/devinit --version
+~/.local/opt/devinit/devinit list
+```
+
+Keep the executable and bundled service definitions together:
 
 ```text
-k8s/
-├── backend.yaml
-└── backend-service.yaml
+~/.local/opt/devinit/
+├── devinit
+└── resources/
+    └── services/
+        └── *.yaml  (12 bundled recipes)
 ```
 
-DevInit performs supported structural checks before generation.
+Optionally add the executable to your command path using a symlink:
 
----
-
-## CLI Commands
-
-| Command | Description |
-|---|---|
-| `devinit --help` | Display available commands and options. |
-| `devinit --version` | Display the installed version. |
-| `devinit check` | Validate configuration without writing files. |
-| `devinit compile` | Generate infrastructure configuration files. |
-| `devinit compile --dry-run` | Preview generation without modifying files. |
-| `devinit compile --force` | Explicitly allow overwriting existing output files. |
-| `devinit add` | Access the service recipe addition workflow. |
-| `devinit list` | List services through the available CLI interface. |
-| `devinit get` | Access the remote service retrieval interface. |
-| `devinit login` | Authentication command; functionality is under development. |
-
-Some commands are experimental or require backend integration. Use `devinit <command> --help` to inspect the currently supported arguments.
-
----
-
-## How DevInit Works
-
-DevInit uses a structured configuration processing pipeline:
-
-```text
-compile.yaml
-     |
-     v
-Configuration Parsing
-     |
-     v
-Preset & Service Resolution
-     |
-     v
-Configuration Validation
-     |
-     v
-Intermediate Representation (IR)
-     |
-     v
-Generation Plan
-     |
-     v
-Filesystem Safety Checks
-     |
-     v
-Generated Infrastructure Files
+```bash
+mkdir -p ~/.local/bin
+ln -s ~/.local/opt/devinit/devinit ~/.local/bin/devinit
 ```
 
-This architecture separates configuration resolution, validation, and generation.
+Make sure `~/.local/bin` is on your `PATH`. This direct and symlink layout has been tested on Linux. **Do not install only the binary** while discarding `resources/services`: registry commands require those files. For a system-wide layout, install `devinit` to `/usr/local/bin/` and service definitions to `/usr/local/share/devinit/services/`.
 
-The generation plan allows DevInit to inspect intended output operations before writing files.
+### Windows x64
 
----
+When released, choose the Windows ZIP (portable) or the `DevInit-Setup-<version>.exe` installer. Keep `devinit.exe` together with its `resources\services\` directory in a portable installation. The installer targets the current user's application directory and does not request administrator privileges.
 
-## Project Structure
+To verify, open PowerShell in the folder containing `devinit.exe` and run:
 
-```text
-DevInit-CLI/
-├── src/
-│   ├── api/              # API integration
-│   ├── cli/              # CLI commands and execution logic
-│   ├── config/           # Global presets
-│   ├── core/             # IR, resolver, service registry
-│   ├── docker/           # Docker-related utilities
-│   ├── file_config/      # Configuration parsing and file handling
-│   ├── generation/       # Generation plans and Kubernetes manifests
-│   ├── generator/        # Infrastructure generators
-│   ├── models/           # Configuration data models
-│   ├── resolved_spec/    # Specification resolution
-│   ├── validator/        # Configuration validation
-│   └── tests/            # Unit tests
-├── tests/                # Integration tests
-├── docs/                 # Technical and user documentation
-├── Cargo.toml
-├── Cargo.lock
-└── README.md
+```powershell
+.\devinit.exe --version
+.\devinit.exe list
 ```
 
----
+The current installer script does not establish that `devinit` is automatically added to `PATH`. If Windows does not recognize `devinit` as a global command, invoke the executable using its full path or configure `PATH` yourself. Windows packaging has passed CI; interactive installer behavior should be verified on an actual Windows machine before final release claims.
+
+### Build from source
+
+Requires Git, Cargo, and a Rust toolchain supporting edition 2024.
+
+```bash
+git clone https://github.com/GorkiyChocolate/DevInit-CLI.git
+cd DevInit-CLI
+cargo build --release --locked
+./target/release/devinit --version
+```
+
+For local development, ensure `resources/services/` remains available alongside the project. On Windows the built executable is `target\release\devinit.exe`.
+
+## Built-in service registry
+
+`devinit list` shows the packaged recipes and their default versions. There are currently **12**:
+
+| Recipe | Description |
+| --- | --- |
+| `postgresql` | PostgreSQL relational database |
+| `mysql` | MySQL relational database |
+| `mariadb` | MariaDB relational database |
+| `mongodb` | MongoDB document database |
+| `redis` | Redis in-memory store |
+| `rabbitmq` | RabbitMQ message broker |
+| `kafka` | Apache Kafka |
+| `elasticsearch` | Elasticsearch search and analytics |
+| `prometheus` | Prometheus monitoring |
+| `grafana` | Grafana visualization |
+| `s3` | Local S3-compatible storage (MinIO-based recipe) |
+| `ec2` | Local AWS emulation (LocalStack-based recipe) |
+
+Available versions depend on the bundled registry. For example, PostgreSQL 16 is currently the default while `version: "17"` is also supported.
+
+```bash
+devinit list
+devinit add redis
+devinit add postgresql --version 17
+```
+
+`add` writes recipe data to a local DevInit cache. It does **not** automatically insert a service into `compile.yaml` or start a container. Use `devinit add --help` for current options.
+
+## Verified downloads
+
+```bash
+devinit download redis
+devinit download kubectl
+devinit download helm
+```
+
+Approved Docker image download names are `redis`, `postgresql`, `kafka`, `prometheus`, and `grafana`. Docker image downloads require a working Docker Engine and use approved repositories. The CLI rejects arbitrary image references or unapproved download names.
+
+`kubectl` and Helm downloads are supported on **Linux x86-64 and ARM64**, not through the Windows binary. DevInit resolves a supported release, verifies SHA-256, and saves the tool to `~/.local/share/devinit/tools/`. It does not automatically add downloaded tools to `PATH`. Binary downloads require network access; Linux supports resumable transfers.
+
+## Commands
+
+| Command | Status and purpose |
+| --- | --- |
+| `devinit check` | Validate the project and generation plan without creating output files. |
+| `devinit compile` | Generate declared infrastructure files; protect existing outputs. |
+| `devinit compile --dry-run` | Preview file actions without writing. |
+| `devinit compile --force` | Allow explicit overwriting (filesystem safeguards still apply). |
+| `devinit list` | Show packaged service recipes. |
+| `devinit add <service>` | Add a recipe to the local cache. |
+| `devinit download <name>` | Download an approved Docker image or supported CLI tool. |
+| `devinit get <source>` | Experimental retrieval; behavior depends on local cache and backend availability. |
+| `devinit login <url>` | Reserved; authentication is not implemented. Returns an error. |
+| `devinit license <type>` | Reserved; not implemented. Returns an error. |
+| `devinit test` | Reserved; not implemented. Returns an error. |
+
+Use `devinit <command> --help` for arguments accepted by your installed version. Registered commands are not necessarily fully implemented.
+
+## Configuration, presets, and output files
+
+Project configuration is `compile.yaml`. Supported top-level keys are `services`, `k8s`, and `cicd`; unknown top-level fields are rejected. Presets are optional and stored separately in a global `devinit.yaml`:
+
+- Linux: `~/.config/devinit/devinit.yaml` or `$XDG_CONFIG_HOME/devinit/devinit.yaml`.
+- Windows: `%APPDATA%\DevInit\devinit.yaml`.
+
+Preset definitions can include `docker_compose`, `k8s`, `cicd`, and `default_url`; project declarations may select known presets using `use` with supported `overrides`.
+
+The default backend URL is resolved in this order: `DEVINIT_API_URL`, global `default_url`, then `http://localhost:5167`. The local built-in registry and configuration generators do not require a running DevInit backend.
+
+| Input | Typical output |
+| --- | --- |
+| `services` / Dockerfile discovery | `docker-compose.yaml` |
+| `k8s` manifests and templates | `k8s/<name>.yaml` |
+| GitHub CI/CD | `.github/workflows/devinit.yml` |
+| GitLab CI/CD | `.gitlab-ci.yml` |
+| Service recipe `files` | Additional declared paths |
+
+## Safety and limitations
+
+- No automatic overwrite without `--force`; `--dry-run` writes no generated files, including with `--force`.
+- Validates dependencies, supported port rules, CI job graphs, selected Kubernetes structures, and generated file paths.
+- Raw Kubernetes documents and CI pipelines must still be validated against their target environments.
+- Generation of multiple files is **not fully transactional**; an unexpected I/O error can leave some outputs written.
+- Local cache, packaged recipe versions, remote integration, and supported platforms have defined limits.
+- DevInit does not generate application code or automatically perform deployments.
 
 ## Documentation
 
-The repository includes documentation for both human developers and AI-assisted configuration generation.
-
-| Document | Purpose |
-|---|---|
-| `docs/USER_GUIDE.md` | Installation, usage, and configuration examples. |
-| `docs/CONFIG_REFERENCE.md` | Supported configuration structures and parameters. |
-| `docs/AI_INSTRUCTIONS.md` | Instructions for AI models generating DevInit configurations. |
-| `docs/PROJECT_DOCUMENTATION.md` | Additional project documentation. |
-
-### AI-Assisted Configuration Generation
-
-DevInit is intended to work with AI-assisted development workflows.
-
-Developers can provide `docs/AI_INSTRUCTIONS.md` and `docs/CONFIG_REFERENCE.md` to an AI coding assistant and request a DevInit configuration.
-
-For example:
-
-> Generate a DevInit `compile.yaml` for a Go backend using PostgreSQL 17 and Redis 7, with Docker Compose and Kubernetes configurations.
-
-The resulting YAML should be validated using:
-
-```bash
-devinit check
-```
-
-AI-generated configurations must be reviewed before use.
-
----
-
-## Current Limitations
-
-DevInit is under active development.
-
-- Dockerfile discovery is not yet integrated into Docker Compose build generation.
-- Configuration validation covers supported rules rather than complete external platform schemas.
-- The CLI does not automatically execute deployments or build Docker images.
-- Generation of multiple files is not guaranteed to be fully atomic.
-- Authentication and remote configuration features are still evolving.
-- Built-in service versions and preset availability are limited to supported definitions.
-
----
-
-## Roadmap
-
-Planned improvements include:
-
-- **Dockerfile Discovery Integration:** automatically associate discovered Dockerfiles with Compose services.
-- **Advanced File Protection:** strengthen safe writes, recovery, and configuration integrity.
-- **CLI Authentication:** complete secure authentication and session management through `devinit login`.
-- **Expanded Service Registry:** add more built-in service recipes, versions, and reusable presets.
-- **Configuration Schema:** provide a machine-readable JSON Schema for `compile.yaml`.
-- **Configuration Versioning and Distribution:** improve sharing and management of reusable infrastructure configurations.
-- **Cross-Platform Improvements:** expand compatibility and installation support.
-
-These features are planned and should not be considered part of the current release until implemented.
-
----
+- [User Guide](docs/USER_GUIDE.md) — workflows, installation, examples, and troubleshooting.
+- [Configuration Reference](docs/CONFIG_REFERENCE.md) — input fields, templates, and output paths.
+- [AI Instructions](docs/AI_INSTRUCTIONS.md) — conservative rules for generating `compile.yaml` with an AI assistant.
+- [AI Configuration Specification](docs/DEVINIT_AI_CONFIGURATION_SPEC.md) and [Project Documentation](docs/PROJECT_DOCUMENTATION.md) — additional project materials; verify their version-specific claims against current code.
 
 ## Development
 
-Run the following checks before submitting changes:
-
 ```bash
-cargo fmt --check
-cargo check
-cargo test
-cargo clippy --all-targets -- -D warnings
-cargo build --release
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --all-targets --all-features --locked
+cargo build --release --locked
 ```
 
-The v0.0.2 development baseline includes 137 automated tests: 121 unit tests and 16 integration tests.
+The audited `0.0.4` development baseline passed **228 automated tests (201 unit and 27 integration)**. This is a tested snapshot, not a promise that the count will never change.
 
-Contributions should preserve existing behavior and include tests for new functionality.
-
----
-
-## Contributing
-
-Contributions, bug reports, and feature requests are welcome.
-
-To contribute:
-
-1. Fork the repository.
-2. Create a dedicated feature or bug-fix branch.
-3. Implement your changes with appropriate tests.
-4. Run the project validation commands.
-5. Open a Pull Request describing your changes.
-
-For feature requests and bug reports, visit [GitHub Issues](https://github.com/GorkiyChocolate/DevInit-CLI/issues).
+For bugs and proposals, see [GitHub Issues](https://github.com/GorkiyChocolate/DevInit-CLI/issues). The DevInit CLI is part of an Astana IT University diploma project focused on declarative infrastructure configuration management, versioning, distribution, and CLI-oriented workflows.
 
 ## License
 
-License information will be provided in the repository. Until then, no open-source license or reuse permissions should be assumed.
-
-## Project Background
-
-DevInit CLI is part of the **DevInit** diploma project developed at Astana IT University.
-
-The academic project explores declarative infrastructure configuration generation, versioning, distribution, and CLI-oriented developer workflows.
-
-The CLI is implemented in Rust and is designed to function independently of the project's optional web platform.
-
----
-
-**DevInit — Define infrastructure once. Generate with confidence.**
+**No open-source license has yet been confirmed or included in the reviewed repository.** Public visibility of source code does not itself grant permission to copy, modify, or redistribute it. A license must be selected and added before advertising DevInit as open-source or releasing it under specific reuse terms.
