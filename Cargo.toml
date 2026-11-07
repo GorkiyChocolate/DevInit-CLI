@@ -1,7 +1,10 @@
 [package]
 name = "devinit_cli_2"
-version = "0.0.4"
+version = "1.0.0-rc.1"
 edition = "2024"
+authors = ["GorkiyChocolate"]
+license = "Apache-2.0"
+
 
 [[bin]]
 name = "devinit"
