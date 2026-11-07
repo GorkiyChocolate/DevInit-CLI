@@ -297,7 +297,9 @@ fn apply_directory_overrides(
             };
 
             let destination = directory.join(&name);
-            let destination = destination.to_string_lossy().into_owned();
+            let destination = destination
+                .to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/");
 
             if !used_paths.insert(destination.clone()) {
                 return Err(configuration_error(format!(

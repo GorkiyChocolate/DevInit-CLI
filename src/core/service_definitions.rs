@@ -106,7 +106,9 @@ fn resolve_service_directories(
             }
 
             let path = dir.join(name);
-            let path = path.to_string_lossy().into_owned();
+            let path = path
+                .to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/");
 
             if !paths.insert(path.clone()) {
                 return Err(invalid_data(format!(

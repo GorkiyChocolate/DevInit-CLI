@@ -261,7 +261,6 @@ fn print_validation_errors(errors: &[ValidationError]) {
 
 /// Dispatches command-line subcommands to their handlers.
 pub fn cli_logic() -> Result<(), DevinitError> {
-    let configs_url = "http://localhost:5167/configs/";
     let matches = commands::build_cli().get_matches();
 
     // Execute the handler matching the selected subcommand.
@@ -454,11 +453,13 @@ pub fn cli_logic() -> Result<(), DevinitError> {
             }
         }
 
-        Some(("login", sub_matches)) => {
-            let config_name = sub_matches
-                .get_one::<String>("login_url")
-                .expect("Required argument");
-            println!("logging in: {}, {:?}", configs_url, config_name);
+        Some(("login", _)) => {
+            return Err(DevinitError::ConfigurationError(
+                "Authentication is not available yet. \
+                The login command will be enabled after \
+                DevInit web service integration."
+                    .to_string(),
+            ));
         }
 
         Some(("compile", sub_matches)) => {
@@ -552,12 +553,30 @@ pub fn cli_logic() -> Result<(), DevinitError> {
             println!("Files written: 0");
         }
 
-        Some(("test", _)) => {}
-        _ => {
-            println!("No subcommand provided. Use --help for usage instructions.");
+        Some(("test", _)) => {
+            return Err(DevinitError::ConfigurationError(
+                "The test command is not implemented yet.".to_string(),
+            ));
+        }
+
+        Some(("license", _)) => {
+            return Err(DevinitError::ConfigurationError(
+                "The license command is reserved for a future release.".to_string(),
+            ));
+        }
+
+        None => {
+            return Err(DevinitError::ConfigurationError(
+                "No subcommand provided. Use --help for usage instructions.".to_string(),
+            ));
+        }
+
+        Some((_, _)) => {
+            return Err(DevinitError::ConfigurationError(
+                "Unknown subcommand. Use --help for usage instructions.".to_string(),
+            ));
         }
     }
-
     Ok(())
 }
 
