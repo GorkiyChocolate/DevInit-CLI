@@ -938,3 +938,56 @@ fn installed_cli_lists_embedded_services_without_override() {
     assert!(stdout.contains("kafka"));
     assert!(stdout.contains("Total: 12 services"));
 }
+
+#[test]
+fn rejects_unknown_top_level_yaml_field() {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "devinit-unknown-field-{}-{id}",
+        std::process::id()
+    ));
+
+    fs::create_dir_all(&root).unwrap();
+
+    let compile_path = root.join("compile.yaml");
+
+    fs::write(
+        &compile_path,
+        r#"
+docker_discovery: true
+services:
+  - name: redis
+    version: "7"
+"#,
+    )
+    .unwrap();
+
+    let result =
+        devinit_cli_2::file_config::yaml_config::load_compile_with_registry(
+            &compile_path,
+        );
+
+    let error = result.expect_err(
+        "Unknown top-level YAML fields must be rejected",
+    );
+
+    let message = error.to_string();
+
+    assert!(
+        message.contains("unknown field")
+            && message.contains("docker_discovery"),
+        "Unexpected error: {message}"
+    );
+
+    assert!(
+        !root.join("docker-compose.yaml").exists(),
+        "Invalid configuration must not generate files"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
