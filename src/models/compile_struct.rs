@@ -5,13 +5,16 @@ use crate::models::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 /// Describes all inputs used by the compiler.
 pub struct CompileSpec {
     /// Lists built-in and custom services.
     #[serde(default)]
     pub services: Vec<CompileService>,
+
     /// Optionally defines a Kubernetes deployment.
     pub kubernetes: Option<Deployment>,
+
     /// Optionally defines a CI/CD pipeline.
     pub cicd: Option<Pipeline>,
 
