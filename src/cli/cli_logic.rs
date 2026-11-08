@@ -426,6 +426,7 @@ pub fn cli_logic() -> Result<(), DevinitError> {
                         json!({
                             "name": name,
                             "default_version": service.default_version,
+                            "versions": service.supported_versions(),
                             "description": service.description
                         })
                     })

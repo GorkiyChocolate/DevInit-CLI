@@ -354,3 +354,83 @@ fn compile_json_refuses_overwrite_without_force() {
 
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn list_json_contains_supported_versions() {
+    let dir = test_dir("list-json-versions");
+
+    let output = run_cli(&dir, &["list", "--json"]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    let services = result["services"]
+        .as_array()
+        .expect("services must be an array");
+
+    assert!(!services.is_empty());
+
+    for service in services {
+        let name = service["name"].as_str().unwrap();
+
+        let default_version = service["default_version"].as_str().unwrap();
+
+        let versions = service["versions"]
+            .as_array()
+            .expect("versions must be an array");
+
+        assert!(!versions.is_empty(), "{name} has no supported versions");
+
+        assert!(
+            versions
+                .iter()
+                .any(|version| { version.as_str() == Some(default_version) }),
+            "{name}: default version {default_version} \
+             is not in supported versions"
+        );
+    }
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn list_json_reports_known_service_versions() {
+    let dir = test_dir("list-json-known-versions");
+
+    let output = run_cli(&dir, &["list", "--json"]);
+
+    assert!(output.status.success());
+
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    let services = result["services"].as_array().unwrap();
+
+    let find_service = |name: &str| {
+        services
+            .iter()
+            .find(|service| service["name"] == name)
+            .unwrap_or_else(|| panic!("Missing service: {name}"))
+    };
+
+    let postgres = find_service("postgresql");
+    let redis = find_service("redis");
+
+    assert!(
+        postgres["versions"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("17"))
+    );
+
+    let redis_versions = redis["versions"].as_array().unwrap();
+
+    assert!(redis_versions.contains(&serde_json::json!("6")));
+    assert!(redis_versions.contains(&serde_json::json!("7")));
+
+    fs::remove_dir_all(dir).unwrap();
+}
