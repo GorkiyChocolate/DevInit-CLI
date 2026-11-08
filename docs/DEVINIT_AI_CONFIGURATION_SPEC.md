@@ -1,8 +1,8 @@
 # DevInit `compile.yaml` — AI Generation Contract
 
-**Target version:** DevInit CLI `1.0.0-rc.2`  
-**Purpose:** Generate valid declarative infrastructure configurations for DevInit.  
-**JSON Schema:** [`compile.schema.json`](../schemas/compile.schema.json)  
+**Target version:** DevInit CLI `1.0.0-rc.2`
+**Purpose:** Generate valid declarative infrastructure configurations for DevInit.
+**JSON Schema:** [`compile.schema.json`](../schemas/compile.schema.json)
 **Authoritative validator:** `devinit check --json`
 
 This document provides rules for AI-assisted configuration

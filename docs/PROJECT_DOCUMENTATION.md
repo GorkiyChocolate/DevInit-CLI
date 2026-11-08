@@ -1,9 +1,9 @@
 # DevInit CLI — Technical Project Documentation
 
-**Version:** 1.0.0-rc.2 (development snapshot)  
-**Language:** Rust (Edition 2024)  
-**Project Type:** Declarative Infrastructure Configuration Generator  
-**Status:** Release Candidate — Installation Validation Pending  
+**Version:** 1.0.0-rc.2 (development snapshot)
+**Language:** Rust (Edition 2024)
+**Project Type:** Declarative Infrastructure Configuration Generator
+**Status:** Release Candidate — Installation Validation Pending
 **Repository:** https://github.com/GorkiyChocolate/DevInit-CLI
 ---
 

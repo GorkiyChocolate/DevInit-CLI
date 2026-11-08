@@ -1,6 +1,6 @@
 # DevInit CLI — User Guide
 
-**Version context:** `0.0.4` development baseline; documentation prepared for the planned v1.0.0 release candidate. Some commands remain experimental.
+**Version context:** `1.0.0-rc.2` development snapshot. Release packaging and installation are undergoing validation.
 
 DevInit is a CLI-first generator for infrastructure configuration files. It reads `compile.yaml`, resolves built-in recipes and optional presets, checks supported rules, then writes Docker Compose, Kubernetes, and CI/CD configuration files. It does not deploy infrastructure.
 
