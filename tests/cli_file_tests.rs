@@ -1,13 +1,9 @@
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 fn test_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "devinit-cli-file-{name}-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("devinit-cli-file-{name}-{}", std::process::id()));
 
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
@@ -15,11 +11,7 @@ fn test_dir(name: &str) -> PathBuf {
 }
 
 fn write_config(path: &Path) {
-    fs::write(
-        path,
-        "services:\n  - name: redis\n    image: redis:7\n",
-    )
-    .unwrap();
+    fs::write(path, "services:\n  - name: redis\n    image: redis:7\n").unwrap();
 }
 
 fn run_cli(dir: &Path, args: &[&str]) -> Output {
@@ -61,12 +53,7 @@ fn custom_file_with_spaces_supports_check_and_dry_run() {
 
     let preview = run_cli(
         &dir,
-        &[
-            "compile",
-            "--file",
-            "custom config.yaml",
-            "--dry-run",
-        ],
+        &["compile", "--file", "custom config.yaml", "--dry-run"],
     );
 
     assert!(
@@ -75,10 +62,7 @@ fn custom_file_with_spaces_supports_check_and_dry_run() {
         String::from_utf8_lossy(&preview.stderr)
     );
 
-    assert!(
-        String::from_utf8_lossy(&preview.stdout)
-            .contains("docker-compose.yaml")
-    );
+    assert!(String::from_utf8_lossy(&preview.stdout).contains("docker-compose.yaml"));
 
     assert!(!dir.join("docker-compose.yaml").exists());
 
