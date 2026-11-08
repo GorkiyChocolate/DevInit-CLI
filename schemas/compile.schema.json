@@ -1,0 +1,426 @@
+
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/GorkiyChocolate/DevInit-CLI/blob/development/schemas/compile.schema.json",
+  "title": "DevInit compile.yaml",
+  "description": "Source configuration for the DevInit infrastructure compiler, before preset expansion and registry resolution.",
+  "type": "object",
+  "properties": {
+    "services": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/serviceName" },
+          { "$ref": "#/$defs/dockerDiscovery" },
+          { "$ref": "#/$defs/composePreset" },
+          { "$ref": "#/$defs/serviceDeclaration" }
+        ]
+      }
+    },
+    "kubernetes": {
+      "$ref": "#/$defs/legacyDeployment"
+    },
+    "k8s": {
+      "$ref": "#/$defs/k8sSection"
+    },
+    "cicd": {
+      "oneOf": [
+        { "$ref": "#/$defs/pipeline" },
+        { "$ref": "#/$defs/cicdPreset" }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "serviceName": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
+    },
+    "stringList": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "nullableStringList": {
+      "type": ["array", "null"],
+      "items": { "type": "string" }
+    },
+    "file": {
+      "type": "object",
+      "required": ["path", "content"],
+      "properties": {
+        "path": { "type": "string" },
+        "content": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "files": {
+      "oneOf": [
+        { "$ref": "#/$defs/file" },
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/file" }
+        },
+        { "type": "null" }
+      ]
+    },
+    "directorySelection": {
+      "type": "object",
+      "required": ["dir", "files"],
+      "properties": {
+        "dir": { "$ref": "#/$defs/nonEmptyString" },
+        "files": { "$ref": "#/$defs/stringList" }
+      },
+      "additionalProperties": false
+    },
+    "serviceSettings": {
+      "type": "object",
+      "properties": {
+        "description": { "type": ["string", "null"] },
+        "ports": { "$ref": "#/$defs/nullableStringList" },
+        "environment": { "$ref": "#/$defs/nullableStringList" },
+        "volumes": { "$ref": "#/$defs/nullableStringList" },
+        "networks": { "$ref": "#/$defs/nullableStringList" },
+        "depends_on": { "$ref": "#/$defs/nullableStringList" },
+        "restart": { "type": ["string", "null"] },
+        "command": { "$ref": "#/$defs/nullableStringList" },
+        "files": { "$ref": "#/$defs/files" },
+        "env": { "$ref": "#/$defs/nullableStringList" },
+        "notes": { "$ref": "#/$defs/nullableStringList" }
+      }
+    },
+    "dockerDiscovery": {
+      "type": "object",
+      "required": ["docker"],
+      "properties": {
+        "docker": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "composePreset": {
+    "type": "object",
+    "required": ["use"],
+    "properties": {
+        "use": {
+        "$ref": "#/$defs/nonEmptyString"
+        },
+        "overrides": {
+        "type": "object",
+        "additionalProperties": {
+            "type": "object",
+            "not": {
+            "anyOf": [
+                { "required": ["name"] },
+                { "required": ["use"] }
+            ]
+            }
+        }
+        }
+    },
+    "additionalProperties": false
+    },
+    "serviceDeclaration": {
+      "allOf": [
+        { "$ref": "#/$defs/serviceSettings" },
+        {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": { "$ref": "#/$defs/serviceName" },
+            "image": { "$ref": "#/$defs/nonEmptyString" },
+            "version": { "$ref": "#/$defs/nonEmptyString" },
+            "directories": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/directorySelection" }
+            }
+          },
+          "not": {
+            "required": ["image", "version"]
+          },
+          "allOf": [
+            {
+              "if": {
+                "required": ["image"]
+              },
+              "then": {
+                "not": { "required": ["directories"] }
+              },
+              "else": {
+                "not": {
+                  "anyOf": [
+                    { "required": ["image"] },
+                    {
+                      "required": ["directories", "files"]
+                    },
+                    {
+                      "required": ["directories", "volumes"]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "legacyDeployment": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "metadata", "spec"],
+      "properties": {
+        "apiVersion": { "$ref": "#/$defs/nonEmptyString" },
+        "kind": { "const": "Deployment" },
+        "metadata": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": { "$ref": "#/$defs/nonEmptyString" }
+          },
+          "additionalProperties": true
+        },
+        "spec": {
+          "type": "object",
+          "required": ["selector", "template"],
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "k8sSection": {
+      "type": "object",
+      "properties": {
+        "use": {
+          "oneOf": [
+            { "$ref": "#/$defs/nonEmptyString" },
+            {
+              "type": "array",
+              "items": { "$ref": "#/$defs/nonEmptyString" },
+              "minItems": 1
+            }
+          ]
+        },
+        "overrides": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/k8sManifest"
+      }
+    },
+    "k8sResourceName": {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 63,
+    "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+    },
+    "k8sManifest": {
+      "oneOf": [
+        { "$ref": "#/$defs/deploymentTemplate" },
+        { "$ref": "#/$defs/serviceTemplate" },
+        { "$ref": "#/$defs/rawK8sManifest" }
+      ]
+    },
+    "deploymentTemplate": {
+    "type": "object",
+    "required": ["template", "name", "image"],
+    "properties": {
+        "template": {
+        "const": "deployment"
+        },
+        "name": {
+        "$ref": "#/$defs/k8sResourceName"
+        },
+        "image": {
+        "$ref": "#/$defs/nonEmptyString"
+        },
+        "replicas": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 10000
+        },
+        "port": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535
+        }
+    },
+    "additionalProperties": false
+    },
+    "serviceTemplate": {
+    "type": "object",
+    "required": ["template", "name", "target"],
+    "properties": {
+        "template": {
+        "const": "service"
+        },
+        "name": {
+        "$ref": "#/$defs/k8sResourceName"
+        },
+        "target": {
+        "$ref": "#/$defs/k8sResourceName"
+        },
+        "port": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535
+        },
+        "targetPort": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535
+        },
+        "type": {
+        "enum": [
+            "ClusterIP",
+            "NodePort",
+            "LoadBalancer"
+        ]
+        }
+    },
+    "additionalProperties": false
+    },
+    "rawK8sManifest": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "metadata"],
+      "properties": {
+        "apiVersion": { "$ref": "#/$defs/nonEmptyString" },
+        "kind": { "$ref": "#/$defs/nonEmptyString" },
+        "metadata": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": { "$ref": "#/$defs/nonEmptyString" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "cicdPreset": {
+      "type": "object",
+      "required": ["use"],
+      "properties": {
+        "use": { "$ref": "#/$defs/nonEmptyString" },
+        "overrides": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "pipeline": {
+      "type": "object",
+      "required": ["provider"],
+      "properties": {
+        "provider": {
+          "enum": ["github", "gitlab"]
+        },
+        "triggers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/trigger" }
+        },
+        "jobs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/job" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "trigger": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "push" },
+            "branches": { "$ref": "#/$defs/stringList" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "pull_request" },
+            "branches": { "$ref": "#/$defs/stringList" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "manual" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "job": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/$defs/nonEmptyString" },
+        "runner": {
+          "enum": [
+            "ubuntu-latest",
+            "windows-latest",
+            "macos-latest"
+          ]
+        },
+        "needs": { "$ref": "#/$defs/stringList" },
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/step" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "step": {
+      "type": "object",
+      "required": ["name", "action"],
+      "properties": {
+        "name": { "$ref": "#/$defs/nonEmptyString" },
+        "action": {
+          "enum": [
+            "checkout",
+            "run",
+            "docker_build",
+            "docker_push"
+          ]
+        },
+        "command": { "type": "string" },
+        "dockerfile": { "type": "string" },
+        "image": { "type": "string" },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "action": { "const": "run" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["command"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "docker_build" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["dockerfile", "image"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "docker_push" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["image"] }
+        }
+      ],
+      "additionalProperties": true
+    }
+  }
+}

@@ -3,6 +3,9 @@ name: DevInit packages (manual pre-release)
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v[0-9]*'
 
 permissions:
   contents: read
@@ -53,7 +56,11 @@ jobs:
           tar -C dist/staging/linux \
             -czf dist/devinit-linux-x64.tar.gz \
             devinit resources
-
+          (
+            cd dist
+            sha256sum devinit-linux-x64.tar.gz \
+              > devinit-linux-x64.tar.gz.sha256
+          )
           test -s dist/devinit-linux-x64.tar.gz
 
           tar -tzf dist/devinit-linux-x64.tar.gz
@@ -90,7 +97,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: devinit-linux-x64
-          path: dist/devinit-linux-x64.tar.gz
+          path: |
+            dist/devinit-linux-x64.tar.gz
+            dist/devinit-linux-x64.tar.gz.sha256
           if-no-files-found: error
 
   windows:
@@ -336,3 +345,72 @@ jobs:
             dist/*.zip
             dist/*.exe
           if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - linux
+      - windows
+
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: devinit-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -s dist/devinit-linux-x64.tar.gz
+          test -s dist/devinit-linux-x64.tar.gz.sha256
+          test -s dist/devinit-windows-x64.zip
+
+          shopt -s nullglob
+          installers=(dist/DevInit-Setup-*.exe)
+
+          test "${#installers[@]}" -eq 1
+          test -s "${installers[0]}"
+
+          (
+            cd dist
+            sha256sum -c devinit-linux-x64.tar.gz.sha256
+          )
+
+          echo "Release assets verified"
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          args=(
+            --verify-tag
+            --title "DevInit ${RELEASE_TAG}"
+            --generate-notes
+          )
+
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            args+=(--prerelease --latest=false)
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            dist/devinit-linux-x64.tar.gz \
+            dist/devinit-linux-x64.tar.gz.sha256 \
+            dist/devinit-windows-x64.zip \
+            dist/DevInit-Setup-*.exe \
+            "${args[@]}"

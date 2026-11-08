@@ -1,10 +1,20 @@
 # DevInit CLI — Configuration Reference
 
-**Applies to:** audited `0.0.4` development implementation, prior to the planned v1.0.0 release candidate.  
-**Scope:** supported, source-confirmed DevInit syntax; this is not a complete formal JSON Schema.  
-**Input:** `compile.yaml` in the project working directory.
+**Version:** `1.0.0-rc.2` development snapshot.
 
-DevInit generates infrastructure files, not deployments. Run `devinit check` before `devinit compile --dry-run`; external platforms may impose additional validation requirements.
+**Input:** `compile.yaml` or an alternative file selected
+with `-f` / `--file`.
+
+**Machine-readable schema:**
+[compile.schema.json](../schemas/compile.schema.json)
+
+DevInit validates infrastructure declarations and generates
+configuration files. It does not deploy infrastructure.
+
+The JSON Schema provides structural checks and editor
+assistance. Semantic validation, service registry resolution,
+dependency checks, and generated-file conflict detection
+are performed by the DevInit CLI.
 
 ## 1. Top-level structure
 
@@ -179,6 +189,41 @@ k8s:
 ```
 
 `k8s.use: [backend]` is also supported. Referenced presets must exist in global `devinit.yaml`; overrides may only target known manifests in the named group. The expanded output names include the preset and manifest names.
+
+### Service-specific configuration directories
+
+Built-in service recipes may provide configuration files
+that can be relocated within the project.
+
+Example:
+
+```yaml
+services:
+  - name: prometheus
+    directories:
+      - dir: monitoring
+        files:
+          - prometheus.yml
+          - alerts.yml
+
+  - name: grafana
+    directories:
+      - dir: observability/grafana
+        files:
+          - default.yml
+```
+
+DevInit reuses the built-in file contents and adjusts
+the associated mounts where applicable.
+
+The directory must be a safe relative path.
+File selections must reference existing recipe files.
+Required recipe files cannot be omitted.
+
+Do not combine `directories` with `files` or `volumes`
+on the same registry service declaration.
+
+Run `devinit check` before generating output.
 
 ## 4. CI/CD (`cicd`)
 

@@ -1,11 +1,10 @@
 # DevInit CLI — Technical Project Documentation
 
-**Version:** 0.0.2  
-**Language:** Rust (Edition 2024)  
-**Project Type:** Declarative Infrastructure Configuration Generator  
-**Status:** Active Development  
+**Version:** 1.0.0-rc.2 (development snapshot)
+**Language:** Rust (Edition 2024)
+**Project Type:** Declarative Infrastructure Configuration Generator
+**Status:** Release Candidate — Installation Validation Pending
 **Repository:** https://github.com/GorkiyChocolate/DevInit-CLI
-
 ---
 
 ## 1. Project Overview
@@ -34,7 +33,7 @@ The main objectives of DevInit are:
 
 ### 1.3 Project Scope
 
-DevInit v0.0.2 focuses on configuration generation rather than infrastructure execution.
+DevInit v1.0.0-rc.2 focuses on declarative infrastructure configuration generation, validation, and safe artifact management rather than direct infrastructure deployment.
 
 Supported generation targets include:
 
@@ -147,71 +146,100 @@ When generation is authorized, the planned artifacts are written to their destin
 
 ## 3. Repository Organization
 
+
 ### 3.1 Directory Structure
 
-The Rust CLI uses the following source organization:
+DevInit separates command-line interaction, configuration
+resolution, validation, generation, and filesystem operations.
+
+The current repository structure includes:
 
 ```text
 DevInit-CLI/
 ├── Cargo.toml
 ├── Cargo.lock
+├── LICENSE
 ├── README.md
+├── .github/
+│   └── workflows/
+│       └── devinit-packages.yml
 ├── src/
 │   ├── main.rs
 │   ├── lib.rs
 │   ├── errors.rs
 │   ├── generator.rs
-│   │
+│   ├── downloader.rs
 │   ├── api/
 │   │   ├── add_recipe.rs
 │   │   ├── get_config.rs
 │   │   └── login.rs
-│   │
 │   ├── cli/
-│   │   ├── cli_logic.rs
-│   │   └── commands.rs
-│   │
+│   │   ├── commands.rs
+│   │   └── cli_logic.rs
 │   ├── config/
 │   │   └── presets.rs
-│   │
 │   ├── core/
 │   │   ├── ir.rs
 │   │   ├── resolver.rs
+│   │   ├── service_definitions.rs
+│   │   ├── service_paths.rs
 │   │   └── service_registry.rs
-│   │
 │   ├── docker/
 │   │   └── docker_finder.rs
-│   │
+│   ├── downloader/
+│   │   └── binary.rs
 │   ├── file_config/
 │   │   ├── env_config.rs
 │   │   ├── file_validator.rs
 │   │   ├── yaml_config.rs
 │   │   └── yaml_writer.rs
-│   │
 │   ├── generation/
 │   │   ├── generation_plan.rs
 │   │   └── k8s_manifests.rs
-│   │
 │   ├── generator/
 │   │   ├── cicd_generator.rs
 │   │   ├── docker_compose_generator.rs
 │   │   ├── k8s_generator.rs
 │   │   └── k8s_service_generator.rs
-│   │
 │   ├── models/
 │   ├── resolved_spec/
 │   ├── validator/
 │   └── tests/
-│
+├── resources/
+│   └── services/
+│       └── *.yaml
+├── schemas/
+│   └── compile.schema.json
 ├── tests/
-│   └── project_tests.rs
-│
+│   ├── cli_file_tests.rs
+│   ├── project_tests.rs
+│   └── schema_validation.py
+├── scripts/
+│   └── install.sh
+├── installer/
+│   └── windows/
+│       └── DevInit.iss
 └── docs/
     ├── PROJECT_DOCUMENTATION.md
     ├── USER_GUIDE.md
     ├── CONFIG_REFERENCE.md
-    └── AI_INSTRUCTIONS.md
+    ├── AI_INSTRUCTIONS.md
+    └── DEVINIT_AI_CONFIGURATION_SPEC.md
 ```
+
+The structure is organized around several principal layers:
+
+- **CLI:** argument parsing, command execution, user-facing output.
+- **Configuration:** YAML loading, global presets, and service resolution.
+- **Validation:** structural and semantic configuration checks.
+- **Intermediate Representation:** normalized configuration and dependency ordering.
+- **Generation:** Docker Compose, Kubernetes, CI/CD, and associated file generation.
+- **Filesystem:** generation plans, path safety, conflict detection, and writing.
+- **Distribution:** packaged service definitions, installers, and release workflows.
+
+The repository also contains automated tests and a Draft
+2020-12 JSON Schema for compile configuration.
+
 
 ### 3.2 Module Compatibility
 
@@ -241,6 +269,51 @@ pub mod generation_plan;
 This preserves existing references such as `crate::ir` and `crate::generation_plan`.
 
 ---
+
+### 3.3 Additional Infrastructure Modules
+
+The current DevInit implementation includes additional
+modules introduced after the earlier development baseline.
+
+**`core/service_definitions.rs`**
+
+Loads and validates service definitions, resolves supported
+service versions, and constructs reusable service recipes.
+
+**`core/service_paths.rs`**
+
+Resolves locations of service recipe files for supported
+development, packaged, and system installation layouts.
+
+**`downloader.rs` and `downloader/binary.rs`**
+
+Implement supported resource download operations and
+associated validation, including source restrictions and
+integrity verification for supported binary downloads.
+
+**`schemas/compile.schema.json`**
+
+Defines the machine-readable structural configuration
+contract using JSON Schema Draft 2020-12.
+
+**`scripts/install.sh`**
+
+Provides the Linux installation workflow, including
+release download, checksum verification, and installation
+into a directory available through PATH.
+
+**`installer/windows/DevInit.iss`**
+
+Defines the Windows user-level installer built with
+Inno Setup.
+
+**`.github/workflows/devinit-packages.yml`**
+
+Defines release package builds, automated tests, portable
+package smoke tests, and release publication logic.
+
+Installation and release workflows remain subject to
+cross-platform integration validation.
 
 ## 4. Application Entry Point and CLI
 
@@ -280,20 +353,33 @@ Its primary responsibilities include:
 
 ### 4.4 Core Commands
 
-| Command | Purpose | File Modification |
+| Command | Purpose | Modifies Files |
 |---|---|---|
-| `devinit check` | Validate configuration and construct a generation plan | No |
-| `devinit compile --dry-run` | Preview generation and report conflicts | No |
-| `devinit compile` | Generate supported configuration files | Yes |
-| `devinit compile --force` | Allow explicit replacement of existing output files | Yes |
+| `devinit check` | Validate the configuration and generation plan | No |
+| `devinit check -f <path>` | Validate a specified configuration file | No |
+| `devinit check --json` | Return structured validation results | No |
+| `devinit compile --dry-run` | Preview planned outputs and conflicts | No |
+| `devinit compile --dry-run --json` | Return a machine-readable generation plan | No |
+| `devinit compile` | Generate infrastructure configuration files | Yes |
+| `devinit compile --force` | Explicitly allow replacement of existing outputs | Yes |
+| `devinit list` | Display available built-in services | No |
+| `devinit list --json` | Return service metadata in JSON format | No |
+| `devinit add <service>` | Add a supported service recipe to the local project cache | Yes |
 | `devinit --help` | Display command help | No |
-| `devinit --version` | Display version information | No |
+| `devinit --version` | Display the CLI version | No |
 
-Additional commands such as `add`, `get`, `list`, `login`, `license`, and `test` exist in the CLI interface.
+The default input file is `compile.yaml`. Both `check` and
+`compile` support `-f` / `--file` for selecting another
+configuration file.
 
-These commands have different implementation maturity levels and should not all be treated as completed production features.
+JSON output is supported for `list`, `check`, and
+`compile --dry-run`. Validation failures return non-zero
+exit codes and structured error information.
 
-In particular, authentication and related remote functionality remain under development.
+Additional interfaces, including remote configuration
+retrieval and authentication, have different maturity
+levels. Their presence in the CLI does not imply
+production-ready backend integration.
 
 ---
 
@@ -826,34 +912,62 @@ Users remain responsible for reviewing generated files before executing them wit
 
 ---
 
+
 ## 12. Dockerfile Discovery
 
-### 12.1 Current Implementation
+### 12.1 Implementation
 
-**Module:** `docker/docker_finder.rs`
+**Module:** `src/docker/docker_finder.rs`
 
-DevInit includes a Dockerfile discovery utility intended to locate Dockerfile-like files in project directories.
+DevInit includes Dockerfile discovery integrated into
+the configuration processing and Docker Compose generation
+pipeline.
 
-The utility can recognize common Dockerfile naming conventions and perform recursive directory traversal.
+The discovery subsystem searches the project for
+Dockerfile candidates and produces service information
+for supported build configurations.
 
-### 12.2 Current Limitation
+It supports:
 
-Dockerfile discovery is not integrated into the primary Docker Compose generation pipeline in the v0.0.2 implementation reviewed for this documentation.
+- Recursive discovery of Dockerfiles.
+- Deterministic discovery ordering.
+- Exclusion of dependency and build directories.
+- Detection of duplicate or conflicting declarations.
+- Generation of Docker Compose build definitions.
+- Resolution of build contexts relative to the
+  configuration file and generated output.
+- Integration of discovered services with supported
+  built-in registry declarations.
 
-As a result, finding a Dockerfile does not automatically create the corresponding Compose `build` definition.
+Discovery is not equivalent to unrestricted framework
+detection or application source-code generation.
 
-### 12.3 Planned Integration
+### 12.2 Configuration and Validation
 
-Future work includes:
+Dockerfile discovery participates in compilation when
+enabled through the supported configuration mechanism.
 
-- Mapping Dockerfiles to services.
-- Resolving build contexts.
-- Handling multiple Dockerfiles.
-- Supporting explicit selection when discovery is ambiguous.
-- Generating `build.context` and `build.dockerfile`.
-- Preserving existing image-based configurations.
+DevInit validates discovery results and rejects
+conflicting service declarations rather than silently
+overwriting user-specified services.
 
-This functionality is tracked as a future enhancement.
+The following automated tests cover its integration:
+
+- `compile_discovers_dockerfiles_and_merges_registry_services`
+- `docker_discovery_rebases_build_context_for_output_directory`
+- `docker_discovery_rejects_duplicate_declarations`
+- `docker_discovery_rejects_explicit_service_conflict`
+- `docker_discovery_rejects_missing_dockerfiles`
+
+### 12.3 Scope and Limitations
+
+Dockerfile discovery generates deployment configuration
+artifacts. It does not build container images, execute
+Docker commands, or deploy discovered services.
+
+More advanced detection, ambiguous-project handling,
+and additional build configuration conventions remain
+possible future improvements.
 
 ---
 
@@ -899,19 +1013,36 @@ Local configuration generation should remain available without authentication.
 
 ## 14. Testing Strategy
 
+
 ### 14.1 Overview
 
-DevInit uses automated tests to verify configuration handling, validation, generation, and filesystem behavior.
+DevInit combines Rust unit and integration tests with
+Python-based JSON Schema contract tests.
 
-The v0.0.2 development baseline contains:
+The `1.0.0-rc.2` development snapshot passed:
 
-| Test Category | Count |
+| Test Category | Passing Tests |
 |---|---:|
-| Unit Tests | 121 |
-| Integration Tests | 16 |
-| Total | **137** |
+| Rust unit tests | 201 |
+| Rust CLI integration tests | 10 |
+| Rust project integration tests | 28 |
+| Python JSON Schema contract tests | 15 |
+| **Total** | **254** |
 
-These counts describe the verified development baseline and may increase in later revisions.
+The Python tests compare JSON Schema validation results
+with the actual behavior of `devinit check --json`.
+
+Additional verification includes:
+
+- `cargo test --locked`
+- `cargo clippy --all-targets --locked -- -D warnings`
+- `cargo fmt --all -- --check`
+- Release binary smoke tests on Linux x86-64.
+- SHA-256 verification of a locally assembled release archive.
+
+Windows installation and PATH integration tests remain
+pending. Test counts refer to this development snapshot
+and may change in later revisions.
 
 ### 14.2 Unit Tests
 
@@ -1083,67 +1214,94 @@ When adding a new command:
 
 ---
 
+
 ## 17. Known Limitations
 
-DevInit v0.0.2 has several documented limitations.
+### Specification Coverage
 
-### Configuration Validation
+DevInit validates its supported configuration subset.
+It does not implement the complete Docker Compose,
+Kubernetes, GitHub Actions, or GitLab CI/CD specifications.
 
-The custom validators do not implement the complete Docker Compose, Kubernetes, GitHub Actions, or GitLab CI/CD specifications.
-
-### Dockerfile Integration
-
-The Dockerfile discovery utility is not yet connected to automatic Compose build generation.
+The JSON Schema provides structural validation, while
+registry-specific and semantic constraints are enforced
+by the CLI.
 
 ### Filesystem Transactions
 
-Multi-file generation does not guarantee complete atomicity or automatic rollback.
+Generation uses preflight checks and protects existing
+files by default. However, multi-file generation does
+not guarantee a fully atomic transaction or rollback
+of every previously written artifact.
 
-### Authentication
+### Authentication and Remote Configuration
 
-Secure interactive CLI authentication is not fully implemented.
-
-### Remote Infrastructure
-
-Backend-dependent registry and configuration distribution capabilities remain under development.
+Backend-dependent configuration distribution and
+authentication workflows are not yet considered
+production-ready.
 
 ### Infrastructure Execution
 
-DevInit generates configuration files but does not automatically execute deployments, build containers, or provision cloud resources.
+DevInit generates configuration files but does not
+automatically execute deployments, build container
+images, or provision cloud resources.
 
-### Cross-Platform Behavior
+### Cross-Platform Distribution
 
-Linux development and automated testing are established. Windows packaging and platform-specific runtime behavior require continued validation as part of release engineering.
+Linux x86-64 GNU release binaries have passed local
+portability tests.
+
+Windows packaging and installation behavior are being
+validated through release engineering.
+
+Linux installation currently targets glibc-based
+x86-64 distributions. Other architectures and
+musl-based environments require separate verification.
+
 
 ---
 
+
 ## 18. Development Roadmap
 
-### 18.1 Configuration Safety
+### 18.1 Completed in the Current Development Line
 
-Strengthen file protection and improve recovery behavior during partial generation failures.
+The following capabilities have been implemented:
 
-### 18.2 Dockerfile Integration
+- Integrated Dockerfile discovery for supported
+  Docker Compose generation scenarios.
+- Built-in service registry with 12 offline recipes.
+- Reusable Compose, Kubernetes, and CI/CD presets.
+- Service-specific configuration directories.
+- Custom configuration paths using `-f` / `--file`.
+- Structured JSON output for supported commands.
+- Draft 2020-12 JSON Schema for compile configuration.
+- Generation previews and filesystem conflict detection.
+- Validation tests covering 254 scenarios.
 
-Connect Dockerfile discovery with Docker Compose generation and support explicit build configuration.
+### 18.2 Release Engineering
 
-### 18.3 Expanded Service Registry
+Current priorities include:
 
-Add more built-in service recipes, supported versions, and reusable infrastructure abstractions.
+- Linux and Windows installation validation.
+- Safe upgrades and command discovery through PATH.
+- Automated release publishing and checksum verification.
+- Cross-platform smoke tests.
+- Final documentation and installation examples.
 
-### 18.4 CLI Authentication
+### 18.3 Future Development
 
-Complete secure account authentication and backend session integration.
+Potential future work includes:
 
-### 18.5 Machine-Readable Configuration Schema
+- Improved recovery from partial multi-file generation.
+- Additional built-in service recipes and presets.
+- Advanced Dockerfile and build configuration discovery.
+- Secure authentication and backend integration.
+- Configuration versioning and distribution.
+- Broader platform and architecture support.
 
-Introduce a JSON Schema for `compile.yaml` to improve editor validation, automated verification, and AI-assisted configuration generation.
-
-### 18.6 Configuration Versioning and Distribution
-
-Develop additional mechanisms for distributing and managing reusable infrastructure configurations through the wider DevInit platform.
-
-These roadmap items are planned capabilities rather than completed v0.0.2 features.
+These future items are not included in the
+`1.0.0-rc.2` release candidate.
 
 ---
 
@@ -1192,16 +1350,10 @@ DevInit provides a modular foundation for declarative infrastructure configurati
 
 Its central architecture separates configuration loading, service resolution, validation, intermediate representation, generation planning, and filesystem writing.
 
-Version 0.0.2 establishes several important capabilities:
-
-- Declarative multi-target configuration generation.
-- Built-in infrastructure recipes and reusable presets.
-- Dependency-aware validation.
-- Kubernetes and CI/CD configuration support.
-- Centralized generation planning.
-- Safe-by-default file handling.
-- Read-only validation and preview commands.
-- Automated regression testing.
+DevInit 1.0.0-rc.2 consolidates declarative infrastructure
+generation, configuration validation, reusable service
+recipes, Dockerfile discovery, and safe artifact management
+into a CLI-first workflow.
 
 Future development will focus on improving configuration safety, expanding supported infrastructure abstractions, integrating Dockerfile discovery, and providing secure remote configuration management.
 

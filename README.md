@@ -6,10 +6,10 @@ DevInit is a Rust command-line tool for declarative infrastructure configuration
 
 DevInit follows a simple philosophy: **minimum configuration, maximum automation**. It favors sensible defaults, optional advanced settings, offline-first service recipes, safe file handling, and actionable errors.
 
-> **Status:** Active development; preparing a v1.0.0 release candidate.  
-> **Current source version:** `0.0.4` (not yet v1.0.0).  
-> **Packaged CLI platforms:** Linux x64 and Windows x64.  
-> **License:** No license file has been provided yet. See [License](#license).
+> **Current version:** `1.0.0-rc.2` (release candidate, not yet published)
+> **Platforms:** Linux x86-64 (GNU/glibc), Windows x86-64
+> **License:** Apache-2.0 — see [LICENSE](LICENSE)
+> **Release status:** Packaging and installation are being validated before publication.
 
 ## What DevInit does
 
@@ -97,65 +97,93 @@ cicd:
 
 This creates Kubernetes files under `k8s/` and a GitHub Actions workflow at `.github/workflows/devinit.yml`. The CI job above is illustrative for a Rust project; choose commands appropriate for your own codebase. See [Configuration Reference](docs/CONFIG_REFERENCE.md) for supported syntax.
 
+
 ## Installation
 
-Installable release assets will be linked from [GitHub Releases](https://github.com/GorkiyChocolate/DevInit-CLI/releases) when published. A successful CI run does **not** imply a public release has been published.
+DevInit provides prebuilt packages for Linux and Windows.
+Rust and Cargo are not required to run the packaged CLI.
 
-### Linux x64 — portable, no sudo
+> **Release status:** Version `1.0.0-rc.2` is under
+> pre-release validation. Download links and automated
+> installation become available after the release assets
+> are published on GitHub.
 
-Download `devinit-linux-x64.tar.gz` when it is available as a release asset, then:
+### Linux x86-64
 
-```bash
-mkdir -p ~/.local/opt/devinit
-tar -xzf devinit-linux-x64.tar.gz -C ~/.local/opt/devinit
-~/.local/opt/devinit/devinit --version
-~/.local/opt/devinit/devinit list
-```
+The Linux installer is designed to download the official
+release, verify its SHA-256 checksum, and install DevInit
+into a directory already available through PATH.
 
-Keep the executable and bundled service definitions together:
-
-```text
-~/.local/opt/devinit/
-├── devinit
-└── resources/
-    └── services/
-        └── *.yaml  (12 bundled recipes)
-```
-
-Optionally add the executable to your command path using a symlink:
+The intended installation command for stable releases is:
 
 ```bash
-mkdir -p ~/.local/bin
-ln -s ~/.local/opt/devinit/devinit ~/.local/bin/devinit
+curl -fsSL https://raw.githubusercontent.com/GorkiyChocolate/DevInit-CLI/development/scripts/install.sh -o install.sh
+bash install.sh
 ```
 
-Make sure `~/.local/bin` is on your `PATH`. This direct and symlink layout has been tested on Linux. **Do not install only the binary** while discarding `resources/services`: registry commands require those files. For a system-wide layout, install `devinit` to `/usr/local/bin/` and service definitions to `/usr/local/share/devinit/services/`.
+Review the installation script before executing it.
+Until a stable release is published, use an explicitly
+selected version:
 
-### Windows x64
+```bash
+DEVINIT_VERSION=v1.0.0-rc.2 bash install.sh
+```
 
-When released, choose the Windows ZIP (portable) or the `DevInit-Setup-<version>.exe` installer. Keep `devinit.exe` together with its `resources\services\` directory in a portable installation. The installer targets the current user's application directory and does not request administrator privileges.
+The installer prefers `~/.local/bin` when it is already
+in PATH. Otherwise, it can use `/usr/local/bin` with sudo.
+It does not require users to manually edit shell profiles.
 
-To verify, open PowerShell in the folder containing `devinit.exe` and run:
+Linux support currently targets x86-64 systems using glibc.
+Alpine Linux and other architectures are not covered by
+this release package.
+
+### Windows x86-64
+
+Download `DevInit-Setup-<version>.exe` from
+[GitHub Releases](https://github.com/GorkiyChocolate/DevInit-CLI/releases)
+when available.
+
+The installer targets the current user's application
+directory and is designed to register DevInit in the
+user's PATH without administrator privileges.
+
+After installation, open a new PowerShell terminal:
 
 ```powershell
-.\devinit.exe --version
-.\devinit.exe list
+devinit --version
+devinit list
 ```
 
-The current installer script does not establish that `devinit` is automatically added to `PATH`. If Windows does not recognize `devinit` as a global command, invoke the executable using its full path or configure `PATH` yourself. Windows packaging has passed CI; interactive installer behavior should be verified on an actual Windows machine before final release claims.
+Automatic PATH registration and uninstall behavior are
+implemented but still awaiting Windows integration testing.
+
+A portable ZIP package is also planned.
 
 ### Build from source
 
-Requires Git, Cargo, and a Rust toolchain supporting edition 2024.
+Requires Git and a Rust toolchain supporting edition 2024.
 
 ```bash
 git clone https://github.com/GorkiyChocolate/DevInit-CLI.git
 cd DevInit-CLI
+git switch development
 cargo build --release --locked
 ./target/release/devinit --version
 ```
 
-For local development, ensure `resources/services/` remains available alongside the project. On Windows the built executable is `target\release\devinit.exe`.
+On Windows, the executable is
+`target\release\devinit.exe`.
+
+### Verify installation
+
+```bash
+devinit --version
+devinit list
+```
+
+The 12 built-in service definitions are embedded in
+the compiled executable. They work without an external
+service registry or a running DevInit backend.
 
 ## Built-in service registry
 
@@ -214,6 +242,43 @@ Approved Docker image download names are `redis`, `postgresql`, `kafka`, `promet
 | `devinit license <type>` | Reserved; not implemented. Returns an error. |
 | `devinit test` | Reserved; not implemented. Returns an error. |
 
+
+### Custom configuration files
+
+DevInit uses `compile.yaml` by default. To select another
+configuration file, use `-f` or `--file`:
+
+```bash
+devinit check -f configs/staging.yaml
+devinit compile -f configs/staging.yaml --dry-run
+devinit compile --file configs/production.yaml
+```
+
+Relative paths are resolved from the working directory.
+Paths to configuration files may contain spaces.
+
+### Structured JSON output
+
+Machine-readable JSON output is available for supported
+read-only and preview operations:
+
+```bash
+devinit list --json
+devinit check --json
+devinit check -f configs/staging.yaml --json
+devinit compile --dry-run --json
+```
+
+JSON output is useful for CI pipelines, scripts, editors,
+and external automation tools.
+
+A validation failure returns a non-zero exit status.
+The JSON response provides structured status and error
+information.
+
+Regular `compile` continues to generate files using
+its normal human-readable output.
+
 Use `devinit <command> --help` for arguments accepted by your installed version. Registered commands are not necessarily fully implemented.
 
 ## Configuration, presets, and output files
@@ -250,6 +315,12 @@ The default backend URL is resolved in this order: `DEVINIT_API_URL`, global `de
 - [Configuration Reference](docs/CONFIG_REFERENCE.md) — input fields, templates, and output paths.
 - [AI Instructions](docs/AI_INSTRUCTIONS.md) — conservative rules for generating `compile.yaml` with an AI assistant.
 - [AI Configuration Specification](docs/DEVINIT_AI_CONFIGURATION_SPEC.md) and [Project Documentation](docs/PROJECT_DOCUMENTATION.md) — additional project materials; verify their version-specific claims against current code.
+- [JSON Schema](schemas/compile.schema.json) —
+  Draft 2020-12 schema for compile configuration.
+  It supports editor completion and structural validation.
+  DevInit's own validator remains authoritative for
+  registry-dependent and semantic checks.
+
 
 ## Development
 
@@ -258,12 +329,18 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --all-features --locked
 cargo build --release --locked
+python tests/schema_validation.py
 ```
 
-The audited `0.0.4` development baseline passed **228 automated tests (201 unit and 27 integration)**. This is a tested snapshot, not a promise that the count will never change.
+The `1.0.0-rc.2` development snapshot passed
+239 Rust tests and 15 Python JSON Schema contract tests
+(254 checks in total), along with Clippy and rustfmt
+verification. Test counts may change as development continues.
 
 For bugs and proposals, see [GitHub Issues](https://github.com/GorkiyChocolate/DevInit-CLI/issues). The DevInit CLI is part of an Astana IT University diploma project focused on declarative infrastructure configuration management, versioning, distribution, and CLI-oriented workflows.
 
 ## License
 
-**No open-source license has yet been confirmed or included in the reviewed repository.** Public visibility of source code does not itself grant permission to copy, modify, or redistribute it. A license must be selected and added before advertising DevInit as open-source or releasing it under specific reuse terms.
+DevInit is licensed under the Apache License, Version 2.0.
+
+See [LICENSE](LICENSE) for the full license text.

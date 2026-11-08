@@ -1,16 +1,16 @@
 use crate::errors::{DevinitError, ValidationError};
 use crate::generation_plan::GenerationPlan;
 use crate::{api, cli, file_config, generator};
-use std::{
-    env,
-    path::{Path, PathBuf},
-};
-
 use api::add_recipe::add_recipe;
 use api::get_config::get_config;
 use cli::commands;
 use file_config::yaml_config::load_compile_with_registry;
+use serde_json::{Value, json};
 use std::fs;
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
 /// Loads the default compile file and generates output in the current directory.
 pub fn compile() -> Result<Vec<PathBuf>, DevinitError> {
@@ -259,6 +259,37 @@ fn print_validation_errors(errors: &[ValidationError]) {
     }
 }
 
+fn print_json(value: Value) {
+    println!("{value}");
+}
+
+fn print_json_error(command: &str, configuration: Option<&Path>, error: &DevinitError) {
+    let errors: Vec<Value> = match error {
+        DevinitError::ValidationErrors(errors) => errors
+            .iter()
+            .map(|error| {
+                json!({
+                    "path": error.path,
+                    "message": error.message
+                })
+            })
+            .collect(),
+        other => vec![json!({
+            "path": null,
+            "message": other.to_string()
+        })],
+    };
+
+    print_json(json!({
+        "status": "error",
+        "command": command,
+        "configuration": configuration
+            .map(|path| path.to_string_lossy().into_owned()),
+        "valid": false,
+        "errors": errors
+    }));
+}
+
 /// Dispatches command-line subcommands to their handlers.
 pub fn cli_logic() -> Result<(), DevinitError> {
     let matches = commands::build_cli().get_matches();
@@ -359,11 +390,42 @@ pub fn cli_logic() -> Result<(), DevinitError> {
             println!("✓ Cache: {}", cache_path.display());
         }
 
-        Some(("list", _)) => {
-            let registry = crate::service_registry::packaged_definitions()
-                .map_err(DevinitError::FileIOError)?;
+        Some(("list", sub_matches)) => {
+            let json_output = sub_matches.get_flag("json");
 
-            if registry.is_empty() {
+            let registry = match crate::service_registry::packaged_definitions() {
+                Ok(registry) => registry,
+                Err(error) => {
+                    let error = DevinitError::FileIOError(error);
+
+                    if json_output {
+                        print_json_error("list", None, &error);
+                    }
+
+                    return Err(error);
+                }
+            };
+
+            if json_output {
+                let services: Vec<Value> = registry
+                    .iter()
+                    .map(|(name, service)| {
+                        json!({
+                            "name": name,
+                            "default_version": service.default_version,
+                            "description": service.description
+                        })
+                    })
+                    .collect();
+
+                print_json(json!({
+                    "status": "success",
+                    "command": "list",
+                    "services": services,
+                    "total": services.len(),
+                    "errors": []
+                }));
+            } else if registry.is_empty() {
                 println!("No built-in services found.");
             } else {
                 println!("Available DevInit services:\n");
@@ -463,27 +525,34 @@ pub fn cli_logic() -> Result<(), DevinitError> {
         }
 
         Some(("compile", sub_matches)) => {
-            let input = Path::new("compile.yaml");
+            let input = sub_matches
+                .get_one::<PathBuf>("file")
+                .expect("Input file has a default value")
+                .as_path();
+
             let output = Path::new(".");
+            let json_output = sub_matches.get_flag("json");
 
             let force = sub_matches.get_flag("force");
             let dry_run = sub_matches.get_flag("dry_run");
 
             if dry_run {
-                let files = dry_run_at(input, output, force)?;
+                let files = match dry_run_at(input, output, force) {
+                    Ok(files) => files,
+                    Err(error) => {
+                        if json_output {
+                            print_json_error("compile", Some(input), &error);
+                        }
 
-                println!("DevInit Dry Run");
-                println!("\n✓ Configuration validated");
-                println!("✓ Generation plan created");
-                println!("\nPlanned files:");
+                        return Err(error);
+                    }
+                };
 
                 let mut creates = 0usize;
                 let mut conflicts = 0usize;
                 let mut overwrites = 0usize;
 
                 for file in &files {
-                    println!("  {:<10} {}", file.action.as_str(), file.path.display());
-
                     match file.action {
                         PlannedAction::Create => creates += 1,
                         PlannedAction::Conflict => conflicts += 1,
@@ -491,19 +560,58 @@ pub fn cli_logic() -> Result<(), DevinitError> {
                     }
                 }
 
-                println!("\nSummary:");
-                println!("  {} files to create", creates);
-                println!("  {} existing files to overwrite", overwrites);
-                println!("  {} conflicts", conflicts);
-                println!("  0 files written");
+                if json_output {
+                    let planned_files: Vec<Value> = files
+                        .iter()
+                        .map(|file| {
+                            json!({
+                                "path": file.path.to_string_lossy(),
+                                "action": file.action
+                                    .as_str()
+                                    .to_ascii_lowercase()
+                            })
+                        })
+                        .collect();
 
-                if conflicts > 0 {
-                    println!("\nUse --force to allow overwriting existing files.");
+                    print_json(json!({
+                        "status": "success",
+                        "command": "compile",
+                        "mode": "dry-run",
+                        "configuration": input.to_string_lossy(),
+                        "valid": true,
+                        "files": planned_files,
+                        "summary": {
+                            "create": creates,
+                            "overwrite": overwrites,
+                            "conflict": conflicts,
+                            "files_written": 0
+                        },
+                        "errors": []
+                    }));
+                } else {
+                    println!("DevInit Dry Run");
+                    println!("\n✓ Configuration validated");
+                    println!("✓ Generation plan created");
+                    println!("\nPlanned files:");
+
+                    for file in &files {
+                        println!("  {:<10} {}", file.action.as_str(), file.path.display());
+                    }
+
+                    println!("\nSummary:");
+                    println!("  {} files to create", creates);
+                    println!("  {} existing files to overwrite", overwrites);
+                    println!("  {} conflicts", conflicts);
+                    println!("  0 files written");
+
+                    if conflicts > 0 {
+                        println!("\nUse --force to allow overwriting existing files.");
+                    }
                 }
             } else {
                 match compile_at_with_options(input, output, force) {
                     Ok(paths) => {
-                        println!("✓ compile.yaml loaded");
+                        println!("✓ {} loaded", input.display());
                         println!("✓ configuration validated");
                         println!("\nGenerated:");
 
@@ -527,30 +635,56 @@ pub fn cli_logic() -> Result<(), DevinitError> {
             }
         }
 
-        Some(("check", _)) => {
-            let count = match check_at(Path::new("compile.yaml")) {
+        Some(("check", sub_matches)) => {
+            let input = sub_matches
+                .get_one::<PathBuf>("file")
+                .expect("Input file has a default value")
+                .as_path();
+
+            let json_output = sub_matches.get_flag("json");
+
+            let count = match check_at(input) {
                 Ok(count) => count,
 
-                Err(DevinitError::ValidationErrors(errors)) => {
-                    print_validation_errors(&errors);
-                    return Err(DevinitError::ValidationErrors(errors));
-                }
-
                 Err(error) => {
-                    eprintln!("Check failed: {error}");
+                    if json_output {
+                        print_json_error("check", Some(input), &error);
+                    } else {
+                        match &error {
+                            DevinitError::ValidationErrors(errors) => {
+                                print_validation_errors(errors);
+                            }
+                            _ => {
+                                eprintln!("Check failed: {error}");
+                            }
+                        }
+                    }
+
                     return Err(error);
                 }
             };
 
-            println!("DevInit Configuration Check");
-            println!("\n✓ compile.yaml loaded");
-            println!("✓ Configuration validated");
-            println!("✓ Dependencies validated");
-            println!("✓ Generation plan created");
+            if json_output {
+                print_json(json!({
+                    "status": "success",
+                    "command": "check",
+                    "configuration": input.to_string_lossy(),
+                    "valid": true,
+                    "planned_files": count,
+                    "files_written": 0,
+                    "errors": []
+                }));
+            } else {
+                println!("DevInit Configuration Check");
+                println!("✓ {} loaded", input.display());
+                println!("✓ Configuration validated");
+                println!("✓ Dependencies validated");
+                println!("✓ Generation plan created");
 
-            println!("\nConfiguration is valid.");
-            println!("Planned files: {count}");
-            println!("Files written: 0");
+                println!("\nConfiguration is valid.");
+                println!("Planned files: {count}");
+                println!("Files written: 0");
+            }
         }
 
         Some(("test", _)) => {

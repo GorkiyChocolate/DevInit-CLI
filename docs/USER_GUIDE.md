@@ -1,34 +1,63 @@
 # DevInit CLI — User Guide
 
-**Version context:** `0.0.4` development baseline; documentation prepared for the planned v1.0.0 release candidate. Some commands remain experimental.
+**Version context:** `1.0.0-rc.2` development snapshot. Release packaging and installation are undergoing validation.
 
 DevInit is a CLI-first generator for infrastructure configuration files. It reads `compile.yaml`, resolves built-in recipes and optional presets, checks supported rules, then writes Docker Compose, Kubernetes, and CI/CD configuration files. It does not deploy infrastructure.
 
+
 ## 1. Install
 
-Get packages from [GitHub Releases](https://github.com/GorkiyChocolate/DevInit-CLI/releases) when they are published. CI-generated artifacts do not necessarily constitute a published release.
+DevInit `1.0.0-rc.2` provides Linux and Windows
+release packaging. Automated installers are currently
+undergoing pre-release validation.
 
-**Linux x64:** unpack `devinit-linux-x64.tar.gz` into `~/.local/opt/devinit` and keep its `resources/services` directory alongside `devinit`:
+For installation instructions and platform limitations,
+see [Installation](../README.md#installation).
 
-```bash
-mkdir -p ~/.local/opt/devinit
-tar -xzf devinit-linux-x64.tar.gz -C ~/.local/opt/devinit
-~/.local/opt/devinit/devinit --version
-~/.local/opt/devinit/devinit list
-```
-
-Optionally create a command symlink:
+After installation, verify:
 
 ```bash
-mkdir -p ~/.local/bin
-ln -s ~/.local/opt/devinit/devinit ~/.local/bin/devinit
+devinit --version
+devinit list
 ```
 
-Ensure `~/.local/bin` is on your `PATH`. This layout has been tested with both direct and symlink invocation. Do not copy just the executable into another folder while leaving all recipe files behind.
+The 12 built-in service recipes are embedded in the
+executable. Copying external registry YAML files is
+not required for normal CLI usage.
 
-**Windows x64:** use the portable ZIP or Inno Setup installer when published. Keep `devinit.exe` and `resources\services` together for portable use. In PowerShell, run `./devinit.exe --version` and `./devinit.exe list` from the extracted folder (Windows PowerShell accepts `.\devinit.exe`). Automatic `PATH` registration by the installer has not been confirmed.
+### Working with another configuration file
 
-**Build from source:** use Rust with edition 2024 support and run `cargo build --release --locked`; keep registry resources accessible to the executable.
+The default input is `compile.yaml`, but another
+file can be supplied explicitly:
+
+```bash
+devinit check --file config/dev.yaml
+devinit compile -f config/dev.yaml --dry-run
+devinit compile -f config/dev.yaml
+```
+
+### Using JSON output
+
+```bash
+devinit list --json
+devinit check --json
+devinit compile --dry-run --json
+```
+
+Use JSON output for automated validation and integrations.
+A failed validation returns a non-zero exit code.
+
+### Safe generation
+
+```bash
+devinit check
+devinit compile --dry-run
+devinit compile
+```
+
+DevInit does not overwrite existing output files by
+default. Use `--force` only when replacement is intended.
+
 
 ## 2. First project
 
