@@ -146,71 +146,100 @@ When generation is authorized, the planned artifacts are written to their destin
 
 ## 3. Repository Organization
 
+
 ### 3.1 Directory Structure
 
-The Rust CLI uses the following source organization:
+DevInit separates command-line interaction, configuration
+resolution, validation, generation, and filesystem operations.
+
+The current repository structure includes:
 
 ```text
 DevInit-CLI/
 ├── Cargo.toml
 ├── Cargo.lock
+├── LICENSE
 ├── README.md
+├── .github/
+│   └── workflows/
+│       └── devinit-packages.yml
 ├── src/
 │   ├── main.rs
 │   ├── lib.rs
 │   ├── errors.rs
 │   ├── generator.rs
-│   │
+│   ├── downloader.rs
 │   ├── api/
 │   │   ├── add_recipe.rs
 │   │   ├── get_config.rs
 │   │   └── login.rs
-│   │
 │   ├── cli/
-│   │   ├── cli_logic.rs
-│   │   └── commands.rs
-│   │
+│   │   ├── commands.rs
+│   │   └── cli_logic.rs
 │   ├── config/
 │   │   └── presets.rs
-│   │
 │   ├── core/
 │   │   ├── ir.rs
 │   │   ├── resolver.rs
+│   │   ├── service_definitions.rs
+│   │   ├── service_paths.rs
 │   │   └── service_registry.rs
-│   │
 │   ├── docker/
 │   │   └── docker_finder.rs
-│   │
+│   ├── downloader/
+│   │   └── binary.rs
 │   ├── file_config/
 │   │   ├── env_config.rs
 │   │   ├── file_validator.rs
 │   │   ├── yaml_config.rs
 │   │   └── yaml_writer.rs
-│   │
 │   ├── generation/
 │   │   ├── generation_plan.rs
 │   │   └── k8s_manifests.rs
-│   │
 │   ├── generator/
 │   │   ├── cicd_generator.rs
 │   │   ├── docker_compose_generator.rs
 │   │   ├── k8s_generator.rs
 │   │   └── k8s_service_generator.rs
-│   │
 │   ├── models/
 │   ├── resolved_spec/
 │   ├── validator/
 │   └── tests/
-│
+├── resources/
+│   └── services/
+│       └── *.yaml
+├── schemas/
+│   └── compile.schema.json
 ├── tests/
-│   └── project_tests.rs
-│
+│   ├── cli_file_tests.rs
+│   ├── project_tests.rs
+│   └── schema_validation.py
+├── scripts/
+│   └── install.sh
+├── installer/
+│   └── windows/
+│       └── DevInit.iss
 └── docs/
     ├── PROJECT_DOCUMENTATION.md
     ├── USER_GUIDE.md
     ├── CONFIG_REFERENCE.md
-    └── AI_INSTRUCTIONS.md
+    ├── AI_INSTRUCTIONS.md
+    └── DEVINIT_AI_CONFIGURATION_SPEC.md
 ```
+
+The structure is organized around several principal layers:
+
+- **CLI:** argument parsing, command execution, user-facing output.
+- **Configuration:** YAML loading, global presets, and service resolution.
+- **Validation:** structural and semantic configuration checks.
+- **Intermediate Representation:** normalized configuration and dependency ordering.
+- **Generation:** Docker Compose, Kubernetes, CI/CD, and associated file generation.
+- **Filesystem:** generation plans, path safety, conflict detection, and writing.
+- **Distribution:** packaged service definitions, installers, and release workflows.
+
+The repository also contains automated tests and a Draft
+2020-12 JSON Schema for compile configuration.
+
 
 ### 3.2 Module Compatibility
 
@@ -240,6 +269,51 @@ pub mod generation_plan;
 This preserves existing references such as `crate::ir` and `crate::generation_plan`.
 
 ---
+
+### 3.3 Additional Infrastructure Modules
+
+The current DevInit implementation includes additional
+modules introduced after the earlier development baseline.
+
+**`core/service_definitions.rs`**
+
+Loads and validates service definitions, resolves supported
+service versions, and constructs reusable service recipes.
+
+**`core/service_paths.rs`**
+
+Resolves locations of service recipe files for supported
+development, packaged, and system installation layouts.
+
+**`downloader.rs` and `downloader/binary.rs`**
+
+Implement supported resource download operations and
+associated validation, including source restrictions and
+integrity verification for supported binary downloads.
+
+**`schemas/compile.schema.json`**
+
+Defines the machine-readable structural configuration
+contract using JSON Schema Draft 2020-12.
+
+**`scripts/install.sh`**
+
+Provides the Linux installation workflow, including
+release download, checksum verification, and installation
+into a directory available through PATH.
+
+**`installer/windows/DevInit.iss`**
+
+Defines the Windows user-level installer built with
+Inno Setup.
+
+**`.github/workflows/devinit-packages.yml`**
+
+Defines release package builds, automated tests, portable
+package smoke tests, and release publication logic.
+
+Installation and release workflows remain subject to
+cross-platform integration validation.
 
 ## 4. Application Entry Point and CLI
 
@@ -1276,16 +1350,10 @@ DevInit provides a modular foundation for declarative infrastructure configurati
 
 Its central architecture separates configuration loading, service resolution, validation, intermediate representation, generation planning, and filesystem writing.
 
-Version 0.0.2 establishes several important capabilities:
-
-- Declarative multi-target configuration generation.
-- Built-in infrastructure recipes and reusable presets.
-- Dependency-aware validation.
-- Kubernetes and CI/CD configuration support.
-- Centralized generation planning.
-- Safe-by-default file handling.
-- Read-only validation and preview commands.
-- Automated regression testing.
+DevInit 1.0.0-rc.2 consolidates declarative infrastructure
+generation, configuration validation, reusable service
+recipes, Dockerfile discovery, and safe artifact management
+into a CLI-first workflow.
 
 Future development will focus on improving configuration safety, expanding supported infrastructure abstractions, integrating Dockerfile discovery, and providing secure remote configuration management.
 
