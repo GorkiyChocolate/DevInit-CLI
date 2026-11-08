@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-
+import os
 from jsonschema import Draft202012Validator
 from ruamel.yaml import YAML
 
@@ -78,6 +78,107 @@ class SchemaValidationTests(unittest.TestCase):
                 f"stdout: {process.stdout}\n"
                 f"stderr: {process.stderr}",
             )
+            
+    
+    def check_compose_preset(
+        self,
+        yaml_content: str,
+        expected_valid: bool,
+    ):
+        document = YAML_PARSER.load(yaml_content)
+        schema_errors = list(self.validator.iter_errors(document))
+
+        self.assertEqual(
+            not schema_errors,
+            expected_valid,
+            f"Unexpected schema validation result: {schema_errors}",
+        )
+
+        with tempfile.TemporaryDirectory(
+            prefix="devinit-preset-contract-"
+        ) as tmp:
+            root = Path(tmp)
+            config_home = root / "config"
+            devinit_dir = config_home / "devinit"
+            devinit_dir.mkdir(parents=True)
+
+            global_config = devinit_dir / "devinit.yaml"
+            global_config.write_text(
+                """
+docker_compose:
+  basic:
+    - name: api
+      image: nginx:alpine
+""",
+                encoding="utf-8",
+            )
+
+            compile_file = root / "compile.yaml"
+            compile_file.write_text(
+                yaml_content,
+                encoding="utf-8",
+            )
+
+            env = os.environ.copy()
+            env["XDG_CONFIG_HOME"] = str(config_home)
+
+            process = subprocess.run(
+                [
+                    str(BINARY),
+                    "check",
+                    "-f",
+                    str(compile_file),
+                    "--json",
+                ],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+
+            result = json.loads(process.stdout)
+            cli_valid = (
+                process.returncode == 0
+                and result.get("status") == "success"
+                and result.get("valid") is True
+            )
+
+            self.assertEqual(
+                cli_valid,
+                expected_valid,
+                f"stdout: {process.stdout}\n"
+                f"stderr: {process.stderr}",
+            )
+
+
+    
+    def test_compose_preset_with_overrides(self):
+        self.check_compose_preset(
+            """
+services:
+  - use: basic
+    overrides:
+      api:
+        ports:
+          - "8080:80"
+""",
+            expected_valid=True,
+        )
+
+    def test_compose_preset_rejects_rename(self):
+        self.check_compose_preset(
+            """
+services:
+  - use: basic
+    overrides:
+      api:
+        name: renamed-api
+""",
+            expected_valid=False,
+        )
+
 
     def test_registry_service(self):
         self.check_config(
