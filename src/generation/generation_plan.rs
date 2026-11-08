@@ -36,6 +36,12 @@ impl GeneratedFile {
     }
 }
 
+/// A file successfully written by the generation plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WrittenFile {
+    pub path: PathBuf,
+    pub overwritten: bool,
+}
 /// A collection of generated files ready for preflight checks.
 ///
 /// Files are stored in deterministic path order.
@@ -149,8 +155,23 @@ impl GenerationPlan {
     /// Existing destinations are protected unless force is enabled.
     ///
     /// Note: this is not a multi-file transaction.
+    /// Writes all planned files and returns their paths.
+    ///
+    /// Preserves the existing public API.
     pub fn write(&self, output_dir: &Path, force: bool) -> Result<Vec<PathBuf>, GenerationError> {
-        // Check all destinations before starting any writes.
+        self.write_with_report(output_dir, force)
+            .map(|files| files.into_iter().map(|file| file.path).collect())
+    }
+
+    /// Writes planned files and reports successful operations.
+    ///
+    /// Each destination is checked before writing.
+    /// This is not a multi-file transaction.
+    pub fn write_with_report(
+        &self,
+        output_dir: &Path,
+        force: bool,
+    ) -> Result<Vec<WrittenFile>, GenerationError> {
         self.preflight(output_dir, force)?;
 
         let mut written = Vec::with_capacity(self.len());
@@ -158,20 +179,24 @@ impl GenerationPlan {
         for file in self.files.values() {
             let destination = output_dir.join(&file.relative_path);
 
-            // Recheck parent paths before creating directories.
             validate_parent_directories(output_dir, &file.relative_path)?;
 
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent)?;
             }
 
-            // Recheck the destination immediately before writing.
-            // This reduces, but does not eliminate, filesystem races.
-            check_destination(&destination, force)?;
+            // Check whether the destination exists immediately
+            // before writing, while preserving the existing
+            // symlink and overwrite protections.
+            let overwritten = check_destination(&destination, force)?;
 
             write_generated_file(&destination, &file.contents, force)?;
 
-            written.push(destination);
+            // Only record files after the write succeeds.
+            written.push(WrittenFile {
+                path: destination,
+                overwritten,
+            });
         }
 
         Ok(written)
@@ -249,7 +274,7 @@ fn validate_parent_directories(
     Ok(())
 }
 
-fn check_destination(destination: &Path, force: bool) -> Result<(), GenerationError> {
+fn check_destination(destination: &Path, force: bool) -> Result<bool, GenerationError> {
     match fs::symlink_metadata(destination) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() {
@@ -284,14 +309,14 @@ fn check_destination(destination: &Path, force: bool) -> Result<(), GenerationEr
                 )
                 .into());
             }
+
+            Ok(true)
         }
 
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
 
-        Err(error) => return Err(error.into()),
+        Err(error) => Err(error.into()),
     }
-
-    Ok(())
 }
 
 /// Installs the contents of one generated file.

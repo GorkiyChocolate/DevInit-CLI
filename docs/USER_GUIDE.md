@@ -42,10 +42,24 @@ devinit compile -f config/dev.yaml
 devinit list --json
 devinit check --json
 devinit compile --dry-run --json
+devinit compile --json
 ```
 
-Use JSON output for automated validation and integrations.
-A failed validation returns a non-zero exit code.
+`devinit compile --json` generates files and returns a structured
+JSON report containing created and overwritten files.
+
+Use `--force` to explicitly allow overwriting existing output files.
+
+`devinit compile --dry-run --json` previews planned actions
+without writing files.
+
+`devinit list --json` includes the `versions` array for each
+packaged service, alongside its default version.
+
+JSON compilation results describe successful writes. Generation
+of multiple files is not transactional, and a failed compilation
+may leave previously written files on disk.
+
 
 ### Safe generation
 

@@ -251,3 +251,186 @@ k8s:
 
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn compile_json_reports_created_file() {
+    let dir = test_dir("compile-json-create");
+    write_config(&dir.join("compile.yaml"));
+
+    let output = run_cli(&dir, &["compile", "--json"]);
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(result["status"], "success");
+    assert_eq!(result["command"], "compile");
+    assert_eq!(result["mode"], "write");
+    assert_eq!(result["valid"], true);
+
+    assert_eq!(result["created"][0], "docker-compose.yaml");
+    assert_eq!(result["overwritten"].as_array().unwrap().len(), 0);
+
+    assert_eq!(result["files"][0]["path"], "docker-compose.yaml");
+    assert_eq!(result["files"][0]["action"], "create");
+
+    assert_eq!(result["summary"]["create"], 1);
+    assert_eq!(result["summary"]["overwrite"], 0);
+    assert_eq!(result["summary"]["files_written"], 1);
+
+    assert!(dir.join("docker-compose.yaml").is_file());
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn compile_json_reports_overwritten_file() {
+    let dir = test_dir("compile-json-force");
+    write_config(&dir.join("compile.yaml"));
+
+    let generated = dir.join("docker-compose.yaml");
+    fs::write(&generated, "old configuration").unwrap();
+
+    let output = run_cli(&dir, &["compile", "--json", "--force"]);
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(result["status"], "success");
+    assert_eq!(result["mode"], "write");
+
+    assert_eq!(result["created"].as_array().unwrap().len(), 0);
+
+    assert_eq!(result["overwritten"][0], "docker-compose.yaml");
+
+    assert_eq!(result["files"][0]["action"], "overwrite");
+
+    assert_eq!(result["summary"]["create"], 0);
+    assert_eq!(result["summary"]["overwrite"], 1);
+    assert_eq!(result["summary"]["files_written"], 1);
+
+    let contents = fs::read_to_string(&generated).unwrap();
+
+    assert_ne!(contents, "old configuration");
+    assert!(contents.contains("redis"));
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn compile_json_refuses_overwrite_without_force() {
+    let dir = test_dir("compile-json-conflict");
+    write_config(&dir.join("compile.yaml"));
+
+    let generated = dir.join("docker-compose.yaml");
+    let original = "user-owned configuration";
+
+    fs::write(&generated, original).unwrap();
+
+    let output = run_cli(&dir, &["compile", "--json"]);
+
+    assert!(!output.status.success());
+
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(result["status"], "error");
+    assert_eq!(result["command"], "compile");
+    assert_eq!(result["valid"], false);
+
+    assert!(!result["errors"].as_array().unwrap().is_empty());
+
+    assert_eq!(fs::read_to_string(&generated).unwrap(), original);
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn list_json_contains_supported_versions() {
+    let dir = test_dir("list-json-versions");
+
+    let output = run_cli(&dir, &["list", "--json"]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    let services = result["services"]
+        .as_array()
+        .expect("services must be an array");
+
+    assert!(!services.is_empty());
+
+    for service in services {
+        let name = service["name"].as_str().unwrap();
+
+        let default_version = service["default_version"].as_str().unwrap();
+
+        let versions = service["versions"]
+            .as_array()
+            .expect("versions must be an array");
+
+        assert!(!versions.is_empty(), "{name} has no supported versions");
+
+        assert!(
+            versions
+                .iter()
+                .any(|version| { version.as_str() == Some(default_version) }),
+            "{name}: default version {default_version} \
+             is not in supported versions"
+        );
+    }
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn list_json_reports_known_service_versions() {
+    let dir = test_dir("list-json-known-versions");
+
+    let output = run_cli(&dir, &["list", "--json"]);
+
+    assert!(output.status.success());
+
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    let services = result["services"].as_array().unwrap();
+
+    let find_service = |name: &str| {
+        services
+            .iter()
+            .find(|service| service["name"] == name)
+            .unwrap_or_else(|| panic!("Missing service: {name}"))
+    };
+
+    let postgres = find_service("postgresql");
+    let redis = find_service("redis");
+
+    assert!(
+        postgres["versions"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("17"))
+    );
+
+    let redis_versions = redis["versions"].as_array().unwrap();
+
+    assert!(redis_versions.contains(&serde_json::json!("6")));
+    assert!(redis_versions.contains(&serde_json::json!("7")));
+
+    fs::remove_dir_all(dir).unwrap();
+}

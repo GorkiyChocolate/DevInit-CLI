@@ -135,7 +135,28 @@ The discovery directive must contain **only** `docker: true`, and may occur **on
 - Published host port conflicts are checked for overlapping host interfaces and matching protocols. Advanced IPv6 and port-range validation is not complete.
 - Service versions are limited to packaged or otherwise configured and validated definitions.
 
+
 ## 3. Kubernetes (`k8s`)
+
+### Kubernetes configuration compatibility
+
+DevInit supports two Kubernetes configuration formats:
+
+- `kubernetes`: the original structured Deployment format.
+  It generates a Deployment and, when applicable, a Service.
+- `k8s`: the recommended format for new projects. It supports
+  Deployment and Service templates, raw Kubernetes manifests,
+  and reusable presets.
+
+Both formats remain supported. They can be used together,
+provided they do not generate conflicting output paths.
+
+The `kubernetes` field is retained for backward compatibility
+and is not formally deprecated in `1.0.0-rc.3`.
+
+Neither format provides complete Kubernetes API validation.
+Validate generated manifests with appropriate Kubernetes
+tools before deploying to production.
 
 ### 3.1 Deployment and Service templates
 

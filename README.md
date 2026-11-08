@@ -6,10 +6,12 @@ DevInit is a Rust command-line tool for declarative infrastructure configuration
 
 DevInit follows a simple philosophy: **minimum configuration, maximum automation**. It favors sensible defaults, optional advanced settings, offline-first service recipes, safe file handling, and actionable errors.
 
-> **Current version:** `1.0.0-rc.2` (release candidate, not yet published)
+
+> **Latest published release:** `1.0.0-rc.2`.
+> **Development version:** upcoming `1.0.0-rc.3`.
 > **Platforms:** Linux x86-64 (GNU/glibc), Windows x86-64
 > **License:** Apache-2.0 — see [LICENSE](LICENSE)
-> **Release status:** Packaging and installation are being validated before publication.
+
 
 ## What DevInit does
 
@@ -98,15 +100,39 @@ cicd:
 This creates Kubernetes files under `k8s/` and a GitHub Actions workflow at `.github/workflows/devinit.yml`. The CI job above is illustrative for a Rust project; choose commands appropriate for your own codebase. See [Configuration Reference](docs/CONFIG_REFERENCE.md) for supported syntax.
 
 
+### Kubernetes configuration formats
+
+DevInit supports two Kubernetes configuration mechanisms:
+
+- `kubernetes`: the original structured Deployment configuration,
+  which generates a Kubernetes Deployment and, when applicable,
+  a Service.
+- `k8s`: the newer manifest configuration mechanism supporting
+  predefined templates and custom Kubernetes resources.
+
+For new projects, prefer `k8s` because it provides more flexible
+manifest generation.
+
+Both mechanisms remain supported for compatibility. They may
+be used in the same project, provided their generated output
+paths do not conflict.
+
+DevInit validates supported configuration structures and output
+paths, but does not replace validation against a Kubernetes
+cluster or the complete Kubernetes API schema.
+
+The `kubernetes` field has not been removed or formally deprecated
+in this release.
+
+
 ## Installation
 
 DevInit provides prebuilt packages for Linux and Windows.
 Rust and Cargo are not required to run the packaged CLI.
 
-> **Release status:** Version `1.0.0-rc.2` is under
-> pre-release validation. Download links and automated
-> installation become available after the release assets
-> are published on GitHub.
+> **Release status:** `1.0.0-rc.2` is the latest published
+> release candidate. Linux and Windows packages are available
+> through GitHub Releases. The `1.0.0-rc.3` release is in development.
 
 ### Linux x86-64
 
@@ -260,30 +286,47 @@ Paths to configuration files may contain spaces.
 ### Structured JSON output
 
 Machine-readable JSON output is available for supported
-read-only and preview operations:
+validation, preview, listing, and generation operations:
 
 ```bash
 devinit list --json
 devinit check --json
 devinit check -f configs/staging.yaml --json
 devinit compile --dry-run --json
+devinit compile --json
 ```
 
-JSON output is useful for CI pipelines, scripts, editors,
+
+`devinit compile --json` generates files and returns a structured
+JSON report containing created and overwritten files.
+
+JSON output is intended for CI pipelines, scripts, editors,
 and external automation tools.
 
-A validation failure returns a non-zero exit status.
-The JSON response provides structured status and error
-information.
+Validation and compilation failures return a non-zero exit status.
+For supported JSON command failures, structured error information
+is written to stdout; diagnostic messages may also appear on stderr.
 
-Regular `compile` continues to generate files using
-its normal human-readable output.
+Regular `compile` continues to use human-readable output.
+Use `devinit <command> --help` to inspect supported options.
 
-Use `devinit <command> --help` for arguments accepted by your installed version. Registered commands are not necessarily fully implemented.
+
+Use `--force` to explicitly allow overwriting existing output files.
+
+`devinit compile --dry-run --json` previews planned actions
+without writing files.
+
+`devinit list --json` includes the `versions` array for each
+packaged service, alongside its default version.
+
+JSON compilation results describe successful writes. Generation
+of multiple files is not transactional, and a failed compilation
+may leave previously written files on disk.
+
 
 ## Configuration, presets, and output files
 
-Project configuration is `compile.yaml`. Supported top-level keys are `services`, `k8s`, and `cicd`; unknown top-level fields are rejected. Presets are optional and stored separately in a global `devinit.yaml`:
+Project configuration is `compile.yaml`. Supported top-level keys are `services`, `kubernetes`, `k8s`, and `cicd`. The `kubernetes` field is supported for compatibility; `k8s` is recommended for new projects. Unknown top-level fields are rejected. Presets are optional and stored separately in a global `devinit.yaml`:
 
 - Linux: `~/.config/devinit/devinit.yaml` or `$XDG_CONFIG_HOME/devinit/devinit.yaml`.
 - Windows: `%APPDATA%\DevInit\devinit.yaml`.
