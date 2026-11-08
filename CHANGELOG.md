@@ -4,7 +4,36 @@ All notable changes to DevInit CLI are documented here.
 
 This project follows [Semantic Versioning](https://semver.org/) for published releases.
 
+
 ## [Unreleased]
+
+### Added
+- GitHub Actions CI for pushes to `development` and pull requests targeting `development` or `master`.
+- JSON output for actual file generation using `devinit compile --json`.
+- Supported version lists for all packaged services in `devinit list --json`.
+
+### Improved
+- Structured reporting of created and overwritten files after successful compilation.
+- Preservation of existing `compile --dry-run --json` behavior.
+- Automated Rust formatting, Clippy, unit, integration, and Python schema contract checks.
+
+### Testing
+- 244 Rust tests passing locally.
+- 15 Python schema contract tests passing locally.
+- JSON compilation tests covering file creation, explicit overwriting, and refusal to overwrite without `--force`.
+
+### Known limitations
+- Multi-file generation is not transactional. A failed write may leave previously generated files on disk.
+- The successful-write JSON report does not provide a complete list of partially written files when compilation fails.
+- Kubernetes validation covers supported structures, not the complete Kubernetes API specification.
+
+## [1.0.0-rc.2] - 2026-11-08
+
+### Added
+- Linux and Windows release-candidate packaging and installation verification.
+
+### Improved
+- Release distribution and installation documentation.
 
 ## [1.0.0-rc.1] - 2026-11-08
 
@@ -34,5 +63,3 @@ This project follows [Semantic Versioning](https://semver.org/) for published re
 - Multi-file output generation is not transactional.
 - Authentication and some remote configuration workflows are incomplete.
 - CLI binary downloads are currently Linux-only; support varies by architecture.
-
-candidate has been built, verified, and dated.
