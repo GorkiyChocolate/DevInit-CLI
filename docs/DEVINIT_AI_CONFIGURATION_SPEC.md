@@ -1,10 +1,25 @@
 # DevInit `compile.yaml` — AI Generation Contract
 
-**Document purpose:** deterministic instructions for a local language model generating valid configuration files for the DevInit CLI. This is a **configuration-generation contract**, not an invitation to invent a new schema.  
-**Target:** DevInit CLI as tested in the v0.0.2 development line (v0.0.3 candidate), October 2026.  
-**Evidence:** demonstrated CLI behavior, known Rust data models/registry definitions and the 30 examples in `generated.zip`. Where a feature has not been verified, this document explicitly says so.
+**Target version:** DevInit CLI `1.0.0-rc.2`  
+**Purpose:** Generate valid declarative infrastructure configurations for DevInit.  
+**JSON Schema:** [`compile.schema.json`](../schemas/compile.schema.json)  
+**Authoritative validator:** `devinit check --json`
 
-> **Golden rule:** Output YAML that DevInit actually accepts. Never substitute a familiar Docker Compose / Kubernetes / Terraform format for the DevInit input format.
+This document provides rules for AI-assisted configuration
+generation, including local language models.
+
+The JSON Schema defines supported structural constraints.
+The DevInit CLI additionally validates registry resolution,
+service versions, dependencies, file selection, and other
+semantic requirements.
+
+A configuration must not be considered valid solely because
+its YAML syntax is correct.
+
+> **Golden rule:** Generate the smallest valid DevInit
+> configuration. Do not substitute standard Docker Compose,
+> Terraform, or Kubernetes YAML for DevInit's input format.
+
 
 ## 1. Mandatory rules for an AI generator
 
@@ -21,20 +36,40 @@
 11. Do not fabricate credentials, hardcode real passwords, or write secrets into `compile.yaml`. Standard service recipes may require environment variables at Docker Compose runtime.
 12. If unsure about an advanced field or exact CI/CD/Kubernetes schema, **omit that feature or ask for the actual schema/template**. Do not hallucinate field names.
 
-## 2. Supported high-level input shape
 
-At the top level, the demonstrated config is equivalent to:
+## 2. Supported High-Level Input Shape
+
+The primary input is `compile.yaml`, or another YAML file
+selected through `-f` / `--file`.
+
+Supported top-level sections include:
 
 ```yaml
 services: []
-# Optional: kubernetes: <a valid Deployment object, or null>
-# Optional: cicd: <a valid Pipeline object, or null>
+
+# Optional infrastructure sections:
+# kubernetes: ...
+# k8s: ...
+# cicd: ...
 ```
 
-- `services`: sequence of service references and/or complete custom service recipes. In the Rust model it defaults to an empty sequence when omitted, but use `services: []` for clarity.
-- `kubernetes`: optional Kubernetes **Deployment object**, **not** an enabled flag. There are also Kubernetes manifest/preset features elsewhere in the codebase; do not assume their shape without the corresponding schema.
-- `cicd`: optional CI/CD **Pipeline object**, **not** an enabled flag.
-- Unknown top-level keys may not all be rejected by the current deserializer; **that does not make them implemented features**. Generate only documented keys.
+The sections have different purposes:
+
+- `services`: built-in service references, custom services,
+  and supported Compose presets.
+- `kubernetes`: supported legacy Deployment configuration.
+- `k8s`: supported Kubernetes manifest templates,
+  raw manifests, and presets.
+- `cicd`: supported CI/CD pipeline declarations and presets.
+
+Do not invent extra top-level fields.
+
+For exact property names, value types, and nested
+structures, consult `compile.schema.json`.
+
+Generate only the sections required by the user's request.
+For a simple service-only project, a `services` list
+is usually sufficient.
 
 ### Service reference syntaxes
 
@@ -425,3 +460,69 @@ The model's output is only a **candidate**. The final authority is the actual De
 ### Scope boundaries / current unknowns
 
 This specification is grounded in observed tests and previously shared Rust types, **not a fresh read of the entire repository**. It does not claim to exhaustively document Kubernetes manifest presets, CI/CD job YAML, advanced registry overrides, remote-backend authentication, or all `ServiceDefinition` fields. Their precise external YAML schema should be extracted from the current source and validated before inclusion in a future expanded revision. Existing cache state and the set of installed definitions can also change how an unknown service is resolved.
+
+
+## 11. Validation Workflow for AI-Generated Configurations
+
+AI-generated YAML must pass a deterministic validation
+pipeline before it is accepted.
+
+### Step 1 — Structural Validation
+
+Validate the generated YAML against
+`schemas/compile.schema.json`.
+
+The schema is intended for IDE integration, AI generation,
+and automated structural checks.
+
+### Step 2 — DevInit Semantic Validation
+
+Run:
+
+```bash
+devinit check -f compile.yaml --json
+```
+
+Check the process exit status and JSON response.
+
+A structurally valid YAML document can still contain
+unknown services, unsupported versions, invalid
+dependencies, or missing built-in recipe files.
+
+### Step 3 — Generation Preview
+
+For valid configurations, run:
+
+```bash
+devinit compile -f compile.yaml --dry-run --json
+```
+
+Inspect the planned output paths and any conflicts.
+
+Do not generate or overwrite project files as part of
+an AI validation workflow unless the user has explicitly
+authorized those actions.
+
+### Step 4 — Dataset Acceptance
+
+Before including a generated configuration in an
+evaluation or training dataset:
+
+1. Record the DevInit version.
+2. Preserve the input YAML.
+3. Record schema validation results.
+4. Record the CLI exit code and JSON response.
+5. Record expected validity and actual validity.
+6. Reject incorrectly labeled examples.
+7. Review security-sensitive configuration manually.
+
+### Generation Principles
+
+- Prefer zero-configuration defaults when reliable.
+- Use built-in recipes instead of repeating defaults.
+- Introduce advanced configuration only when required.
+- Never invent registry file names or version keys.
+- Never overwrite user files without authorization.
+- Report validation errors clearly.
+- Never claim deployment or runtime success based
+  solely on successful configuration generation.
