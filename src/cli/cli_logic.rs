@@ -463,7 +463,11 @@ pub fn cli_logic() -> Result<(), DevinitError> {
         }
 
         Some(("compile", sub_matches)) => {
-            let input = Path::new("compile.yaml");
+            let input = sub_matches
+                .get_one::<PathBuf>("file")
+                .expect("Input file has a default value")
+                .as_path();
+
             let output = Path::new(".");
 
             let force = sub_matches.get_flag("force");
@@ -503,7 +507,7 @@ pub fn cli_logic() -> Result<(), DevinitError> {
             } else {
                 match compile_at_with_options(input, output, force) {
                     Ok(paths) => {
-                        println!("✓ compile.yaml loaded");
+                        println!("✓ {} loaded", input.display());
                         println!("✓ configuration validated");
                         println!("\nGenerated:");
 
@@ -527,8 +531,13 @@ pub fn cli_logic() -> Result<(), DevinitError> {
             }
         }
 
-        Some(("check", _)) => {
-            let count = match check_at(Path::new("compile.yaml")) {
+        Some(("check", sub_matches)) => {
+            let input = sub_matches
+                .get_one::<PathBuf>("file")
+                .expect("Input file has a default value")
+                .as_path();
+
+            let count = match check_at(input) {
                 Ok(count) => count,
 
                 Err(DevinitError::ValidationErrors(errors)) => {
@@ -543,7 +552,7 @@ pub fn cli_logic() -> Result<(), DevinitError> {
             };
 
             println!("DevInit Configuration Check");
-            println!("\n✓ compile.yaml loaded");
+            println!("✓ {} loaded", input.display());
             println!("✓ Configuration validated");
             println!("✓ Dependencies validated");
             println!("✓ Generation plan created");
