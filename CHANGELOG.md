@@ -7,6 +7,8 @@ This project follows [Semantic Versioning](https://semver.org/) for published re
 
 ## [Unreleased]
 
+## [1.0.0-rc.3] - 2026-11-08
+
 ### Added
 - GitHub Actions CI for pushes to `development` and pull requests targeting `development` or `master`.
 - JSON output for actual file generation using `devinit compile --json`.
@@ -18,13 +20,11 @@ This project follows [Semantic Versioning](https://semver.org/) for published re
 - Automated Rust formatting, Clippy, unit, integration, and Python schema contract checks.
 
 ### Testing
-- 244 Rust tests passing locally.
-- 15 Python schema contract tests passing locally.
-- JSON compilation tests covering file creation, explicit overwriting, and refusal to overwrite without `--force`.
+- 244 Rust tests and 15 Python schema contract tests passing locally.
 
 ### Known limitations
-- Multi-file generation is not transactional. A failed write may leave previously generated files on disk.
 - The successful-write JSON report does not provide a complete list of partially written files when compilation fails.
+- Multi-file generation is not transactional. A failed write may leave previously generated files on disk.
 - Kubernetes validation covers supported structures, not the complete Kubernetes API specification.
 
 ## [1.0.0-rc.2] - 2026-11-08
@@ -63,3 +63,4 @@ This project follows [Semantic Versioning](https://semver.org/) for published re
 - Multi-file output generation is not transactional.
 - Authentication and some remote configuration workflows are incomplete.
 - CLI binary downloads are currently Linux-only; support varies by architecture.
+- The successful-write JSON report does not provide a complete list of partially written files when compilation fails.

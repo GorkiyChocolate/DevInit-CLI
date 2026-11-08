@@ -160,8 +160,6 @@ tools before deploying to production.
 
 ### 3.1 Deployment and Service templates
 
-### 3.1 Deployment and Service templates
-
 ```yaml
 k8s:
   backend:
