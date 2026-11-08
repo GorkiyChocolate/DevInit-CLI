@@ -179,3 +179,75 @@ fn list_json_returns_services() {
 
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn check_accepts_k8s_section_with_json_output() {
+    let dir = test_dir("k8s-json-check");
+
+    let config = r#"
+services:
+  - redis
+
+k8s:
+  redis-deployment:
+    template: deployment
+    name: redis-test
+    image: redis:7
+    port: 6379
+"#;
+
+    fs::write(dir.join("compile.yaml"), config).unwrap();
+
+    let output = run_cli(&dir, &["check", "--json"]);
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(result["status"], "success");
+    assert_eq!(result["valid"], true);
+
+    // Docker Compose + Kubernetes Deployment.
+    assert_eq!(result["planned_files"], 2);
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn check_rejects_invalid_k8s_section() {
+    let dir = test_dir("k8s-invalid");
+
+    let config = r#"
+services:
+  - redis
+
+k8s:
+  invalid-deployment:
+    template: deployment
+    name: redis-test
+    image: redis:7
+    port: 70000
+"#;
+
+    fs::write(dir.join("compile.yaml"), config).unwrap();
+
+    let output = run_cli(&dir, &["check", "--json"]);
+
+    assert!(
+        !output.status.success(),
+        "Invalid Kubernetes configuration was accepted"
+    );
+
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(result["status"], "error");
+    assert_eq!(result["valid"], false);
+    assert!(!result["errors"].as_array().unwrap().is_empty());
+
+    fs::remove_dir_all(dir).unwrap();
+}

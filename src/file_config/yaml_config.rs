@@ -159,6 +159,16 @@ pub fn load_compile_with_registry(path: &Path) -> Result<CompileSpec, DevinitErr
         },
     )?;
 
+    // Kubernetes manifests are loaded separately by
+    // k8s_manifests::load_manifests().
+    //
+    // Remove the k8s section from the document used for
+    // CompileSpec deserialization. The original YAML file
+    // remains unchanged.
+    if let Some(mapping) = document.as_mapping_mut() {
+        mapping.remove(serde_yaml::Value::String("k8s".to_string()));
+    }
+
     let mut spec: CompileSpec = serde_yaml::from_value(document)?;
     spec.docker_discovery = docker_discovery;
 
