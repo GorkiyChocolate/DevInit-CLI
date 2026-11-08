@@ -1,6 +1,42 @@
 # DevInit CLI — Instructions for AI Configuration Generators
 
-**Authority:** DevInit's actual tagged release code, its [Configuration Reference](CONFIG_REFERENCE.md), and validated examples. This guide reflects the audited `0.0.4` development baseline and is intended for the upcoming v1.0.0 release candidate.
+**Target version:** DevInit `1.0.0-rc.2`.
+
+**Schema:** [compile.schema.json](../schemas/compile.schema.json).
+
+Generate DevInit `compile.yaml` files using only supported
+syntax. Prefer the smallest valid configuration.
+
+Validate generated YAML against the JSON Schema when
+available, then run DevInit's own semantic validator:
+
+```bash
+devinit check -f compile.yaml --json
+```
+
+A schema-valid configuration may still be rejected by
+the CLI if it references an unknown recipe, unsupported
+service version, invalid dependency, or unavailable file.
+
+
+### Additional generation rules
+
+- Prefer built-in registry declarations over repeating
+  Docker Compose defaults.
+- Do not invent service-specific configuration files.
+- When using `directories`, include all required files
+  from the selected built-in recipe.
+- Do not combine `directories` with `files` or `volumes`
+  in the same registry declaration.
+- Do not assume the JSON Schema can validate the
+  existence of registry files or global presets.
+- Prefer `check --json` to capture validation errors
+  in automated workflows.
+- Never use `--force` automatically without explicit
+  user approval.
+- Do not claim that generated Kubernetes manifests or
+  CI pipelines have been deployed or executed.
+
 
 ## Task
 
@@ -147,3 +183,4 @@ devinit compile
 ```
 
 Do not use `--force` by default; it explicitly permits overwriting generated files. For complex Kubernetes or CI/CD outputs, recommend external validation with the appropriate platform tools. `devinit login`, `devinit license`, and `devinit test` are not implemented in the audited baseline; `get` can depend on backend availability. Do not invent `devinit copy`, auto-deployment, or lockfile commands.
+
