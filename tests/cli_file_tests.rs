@@ -101,3 +101,81 @@ fn custom_file_compile_preserves_existing_output() {
 
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn check_json_returns_valid_document() {
+    let dir = test_dir("check-json");
+    write_config(&dir.join("compile.yaml"));
+
+    let output = run_cli(&dir, &["check", "--json"]);
+    assert!(output.status.success());
+
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(value["status"], "success");
+    assert_eq!(value["command"], "check");
+    assert_eq!(value["valid"], true);
+    assert_eq!(value["files_written"], 0);
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn check_json_reports_missing_file() {
+    let dir = test_dir("check-json-error");
+
+    let output = run_cli(&dir, &["check", "--file", "missing.yaml", "--json"]);
+
+    assert!(!output.status.success());
+
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(value["status"], "error");
+    assert_eq!(value["valid"], false);
+    assert!(
+        value["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("missing.yaml")
+    );
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn dry_run_json_reports_planned_files() {
+    let dir = test_dir("dry-run-json");
+    write_config(&dir.join("compile.yaml"));
+
+    let output = run_cli(&dir, &["compile", "--dry-run", "--json"]);
+
+    assert!(output.status.success());
+
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(value["status"], "success");
+    assert_eq!(value["mode"], "dry-run");
+    assert_eq!(value["summary"]["create"], 1);
+    assert_eq!(value["files"][0]["action"], "create");
+
+    assert!(!dir.join("docker-compose.yaml").exists());
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn list_json_returns_services() {
+    let dir = test_dir("list-json");
+
+    let output = run_cli(&dir, &["list", "--json"]);
+    assert!(output.status.success());
+
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(value["status"], "success");
+    assert_eq!(value["command"], "list");
+    assert_eq!(value["total"], 12);
+    assert_eq!(value["services"].as_array().unwrap().len(), 12);
+
+    fs::remove_dir_all(dir).unwrap();
+}

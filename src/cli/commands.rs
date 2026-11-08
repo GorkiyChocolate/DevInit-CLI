@@ -45,7 +45,14 @@ fn build_add_cli() -> Command {
 
 /// Builds the service-list command.
 fn build_list_cli() -> Command {
-    Command::new("list").about("List available built-in DevInit services")
+    Command::new("list")
+        .about("List available built-in DevInit services")
+        .arg(
+            Arg::new("json")
+                .long("json")
+                .help("Output results as JSON")
+                .action(ArgAction::SetTrue),
+        )
 }
 
 /// Builds the configuration-get command.
@@ -105,6 +112,13 @@ fn build_compile_cli() -> Command {
                 .help("Preview generated files without writing anything")
                 .action(ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("json")
+                .long("json")
+                .help("Output dry-run results as JSON")
+                .requires("dry_run")
+                .action(ArgAction::SetTrue),
+        )
 }
 
 fn build_check_cli() -> Command {
@@ -118,6 +132,12 @@ fn build_check_cli() -> Command {
                 .value_name("PATH")
                 .default_value("compile.yaml")
                 .value_parser(clap::value_parser!(std::path::PathBuf)),
+        )
+        .arg(
+            Arg::new("json")
+                .long("json")
+                .help("Output validation results as JSON")
+                .action(ArgAction::SetTrue),
         )
 }
 
