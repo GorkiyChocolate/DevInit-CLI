@@ -301,5 +301,91 @@ k8s:
         )
 
 
+
+    def test_prometheus_and_grafana_directories(self):
+        self.check_config(
+            """
+services:
+  - name: prometheus
+    directories:
+      - dir: monitoring
+        files:
+          - prometheus.yml
+          - alerts.yml
+
+  - name: grafana
+    directories:
+      - dir: observability/grafana
+        files:
+          - default.yml
+""",
+            expected_valid=True,
+        )
+
+    def test_rejects_directories_with_volumes(self):
+        self.check_config(
+            """
+services:
+  - name: prometheus
+    directories:
+      - dir: monitoring
+        files:
+          - prometheus.yml
+          - alerts.yml
+    volumes:
+      - "data:/data"
+""",
+            expected_valid=False,
+        )
+
+    def test_unknown_directory_file_is_rejected_by_cli(self):
+        content = """
+services:
+  - name: prometheus
+    directories:
+      - dir: monitoring
+        files:
+          - unknown.yml
+"""
+
+        document = YAML_PARSER.load(content)
+        schema_errors = list(self.validator.iter_errors(document))
+
+        # The structure is valid. Only the registry knows
+        # whether the requested recipe file exists.
+        self.assertFalse(schema_errors, str(schema_errors))
+
+        with tempfile.TemporaryDirectory(
+            prefix="devinit-invalid-directory-"
+        ) as tmp:
+            config = Path(tmp) / "compile.yaml"
+            config.write_text(content, encoding="utf-8")
+
+            process = subprocess.run(
+                [
+                    str(BINARY),
+                    "check",
+                    "-f",
+                    str(config),
+                    "--json",
+                ],
+                cwd=tmp,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+
+            result = json.loads(process.stdout)
+
+            self.assertNotEqual(process.returncode, 0)
+            self.assertEqual(result["status"], "error")
+            self.assertEqual(result["valid"], False)
+
+            self.assertIn(
+                "unknown.yml",
+                json.dumps(result["errors"]),
+            )
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
