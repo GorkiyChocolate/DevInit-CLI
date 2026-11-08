@@ -115,8 +115,7 @@ fn build_compile_cli() -> Command {
         .arg(
             Arg::new("json")
                 .long("json")
-                .help("Output dry-run results as JSON")
-                .requires("dry_run")
+                .help("Output compilation results as JSON")
                 .action(ArgAction::SetTrue),
         )
 }

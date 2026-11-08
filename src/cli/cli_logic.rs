@@ -1,5 +1,5 @@
 use crate::errors::{DevinitError, ValidationError};
-use crate::generation_plan::GenerationPlan;
+use crate::generation_plan::{GenerationPlan, WrittenFile};
 use crate::{api, cli, file_config, generator};
 use api::add_recipe::add_recipe;
 use api::get_config::get_config;
@@ -236,18 +236,31 @@ pub fn dry_run_at(
 }
 
 /// Loads, validates and generates infrastructure configurations.
+/// Loads, validates and generates infrastructure configurations.
+///
+/// Preserves the existing public API.
 pub fn compile_at_with_options(
     input_path: &Path,
     output_dir: &Path,
     force: bool,
 ) -> Result<Vec<PathBuf>, DevinitError> {
+    compile_at_with_report(input_path, output_dir, force)
+        .map(|files| files.into_iter().map(|file| file.path).collect())
+}
+
+/// Generates infrastructure files and returns successful
+/// write operations with their pre-write destination state.
+pub fn compile_at_with_report(
+    input_path: &Path,
+    output_dir: &Path,
+    force: bool,
+) -> Result<Vec<WrittenFile>, DevinitError> {
     let plan = build_plan(input_path, output_dir)?;
 
-    // Preserve existing overwrite protection.
     plan.preflight(output_dir, force)?;
 
-    // FileWriter still performs its own preflight.
-    plan.write(output_dir, force).map_err(DevinitError::from)
+    plan.write_with_report(output_dir, force)
+        .map_err(DevinitError::from)
 }
 
 /// Prints validation errors in a readable command-line format.
@@ -609,27 +622,84 @@ pub fn cli_logic() -> Result<(), DevinitError> {
                     }
                 }
             } else {
-                match compile_at_with_options(input, output, force) {
-                    Ok(paths) => {
-                        println!("✓ {} loaded", input.display());
-                        println!("✓ configuration validated");
-                        println!("\nGenerated:");
+                if json_output {
+                    let written = match compile_at_with_report(input, output, force) {
+                        Ok(written) => written,
+                        Err(error) => {
+                            print_json_error("compile", Some(input), &error);
+                            return Err(error);
+                        }
+                    };
 
-                        for path in &paths {
-                            println!("  {}", path.display());
+                    let mut created: Vec<String> = Vec::new();
+                    let mut overwritten: Vec<String> = Vec::new();
+                    let mut files: Vec<Value> = Vec::new();
+
+                    for file in &written {
+                        let relative_path = file
+                            .path
+                            .strip_prefix(output)
+                            .unwrap_or(file.path.as_path());
+
+                        let path = relative_path.to_string_lossy().replace('\\', "/");
+
+                        let action = if file.overwritten {
+                            overwritten.push(path.clone());
+                            "overwrite"
+                        } else {
+                            created.push(path.clone());
+                            "create"
+                        };
+
+                        files.push(json!({
+                            "path": path,
+                            "action": action
+                        }));
+                    }
+                    let created_count = created.len();
+                    let overwritten_count = overwritten.len();
+
+                    print_json(json!({
+                        "status": "success",
+                        "command": "compile",
+                        "mode": "write",
+                        "configuration": input.to_string_lossy(),
+                        "valid": true,
+                        "created": created,
+                        "overwritten": overwritten,
+                        "files": files,
+                        "summary": {
+                            "create": created_count,
+                            "overwrite": overwritten_count,
+                            "conflict": 0,
+                            "files_written": written.len()
+                        },
+                        "errors": []
+                    }));
+                } else {
+                    match compile_at_with_options(input, output, force) {
+                        Ok(paths) => {
+                            println!("✓ {} loaded", input.display());
+                            println!("✓ configuration validated");
+                            println!("\nGenerated:");
+
+                            for path in &paths {
+                                println!("  {}", path.display());
+                            }
+
+                            println!("\n✓ {} files generated", paths.len());
                         }
 
-                        println!("\n✓ {} files generated", paths.len());
-                    }
+                        Err(DevinitError::ValidationErrors(errors)) => {
+                            print_validation_errors(&errors);
 
-                    Err(DevinitError::ValidationErrors(errors)) => {
-                        print_validation_errors(&errors);
-                        return Err(DevinitError::ValidationErrors(errors));
-                    }
+                            return Err(DevinitError::ValidationErrors(errors));
+                        }
 
-                    Err(error) => {
-                        eprintln!("Compile failed: {error}");
-                        return Err(error);
+                        Err(error) => {
+                            eprintln!("Compile failed: {error}");
+                            return Err(error);
+                        }
                     }
                 }
             }
