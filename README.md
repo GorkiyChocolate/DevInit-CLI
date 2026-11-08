@@ -6,11 +6,12 @@ DevInit is a Rust command-line tool for declarative infrastructure configuration
 
 DevInit follows a simple philosophy: **minimum configuration, maximum automation**. It favors sensible defaults, optional advanced settings, offline-first service recipes, safe file handling, and actionable errors.
 
+
 > **Latest published release:** `1.0.0-rc.2`.
-> Development builds may contain features planned for `1.0.0-rc.3`.
+> **Development version:** upcoming `1.0.0-rc.3`.
 > **Platforms:** Linux x86-64 (GNU/glibc), Windows x86-64
 > **License:** Apache-2.0 — see [LICENSE](LICENSE)
-> **Release status:** `1.0.0-rc.2` is a published release candidate; `1.0.0-rc.3` is in development.
+
 
 ## What DevInit does
 
@@ -129,10 +130,9 @@ in this release.
 DevInit provides prebuilt packages for Linux and Windows.
 Rust and Cargo are not required to run the packaged CLI.
 
-> **Release status:** Version `1.0.0-rc.2` is under
-> pre-release validation. Download links and automated
-> installation become available after the release assets
-> are published on GitHub.
+> **Release status:** `1.0.0-rc.2` is the latest published
+> release candidate. Linux and Windows packages are available
+> through GitHub Releases. The `1.0.0-rc.3` release is in development.
 
 ### Linux x86-64
 
@@ -286,7 +286,7 @@ Paths to configuration files may contain spaces.
 ### Structured JSON output
 
 Machine-readable JSON output is available for supported
-read-only and preview operations:
+validation, preview, listing, and generation operations:
 
 ```bash
 devinit list --json
